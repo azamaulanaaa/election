@@ -32,11 +32,15 @@ impl Ord for LogState {
 
 pub struct Node {
     rx: Mutex<mpsc::Receiver<Message>>,
+    log_state: Mutex<LogState>,
 }
 
 impl Node {
     pub fn new(rx: mpsc::Receiver<Message>) -> Self {
-        Self { rx: Mutex::new(rx) }
+        Self {
+            rx: Mutex::new(rx),
+            log_state: Default::default(),
+        }
     }
 
     pub async fn run(&self) {
