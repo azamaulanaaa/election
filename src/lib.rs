@@ -37,9 +37,17 @@ impl Ord for LogState {
 }
 
 #[derive(Default)]
+pub enum NodeKind {
+    #[default]
+    Leader,
+    Follower,
+}
+
+#[derive(Default)]
 pub struct State {
     pub vote_for: Option<u64>,
     pub term: u64,
+    pub kind: NodeKind,
 }
 
 pub struct Node {
