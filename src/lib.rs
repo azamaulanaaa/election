@@ -84,9 +84,13 @@ impl Node {
 
         let granted = match Ord::cmp(&msg.term, &state.term) {
             Ordering::Greater => true,
+            Ordering::Less => false,
             _ => false,
         };
         let granted = granted && msg.last_log_state >= *log_state;
+        if granted {
+            state.vote_for = Some(msg.candidate_id);
+        }
 
         if state.term < msg.term {
             state.term = msg.term;
@@ -331,6 +335,68 @@ mod tests {
                 state.vote_for,
                 Some(new_candidate),
                 "Node should vote for candidate with higher term"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_request_vote_for_lower_term() {
+        let (_tx_req, rx_req) = mpsc::channel(1);
+        let node = Node::new(rx_req);
+
+        let node_state = { node.state.lock().await.clone() };
+        let new_node_states = [
+            State {
+                term: 10,
+                vote_for: None,
+                kind: NodeKind::Follower,
+                ..node_state
+            },
+            State {
+                term: 10,
+                vote_for: None,
+                kind: NodeKind::Leader,
+                ..node_state
+            },
+            State {
+                term: 10,
+                vote_for: Some(1),
+                kind: NodeKind::Follower,
+                ..node_state
+            },
+            State {
+                term: 10,
+                vote_for: Some(1),
+                kind: NodeKind::Leader,
+                ..node_state
+            },
+        ];
+        let mut new_node_state = new_node_states.into_iter();
+
+        while let Some(new_node_state) = new_node_state.next() {
+            {
+                let mut node_state = node.state.lock().await;
+                *node_state = new_node_state;
+            }
+            let new_term = new_node_state.term - 1;
+            let new_candidate = new_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
+
+            let msg_res = node
+                .handle_request_vote(MsgRequestVoteReq {
+                    term: new_term,
+                    candidate_id: new_candidate,
+                    last_log_state: { node.log_state.lock().await.clone() },
+                })
+                .await;
+            assert!(
+                !msg_res.granted,
+                "RequestVote must not granted vote for lower term"
+            );
+
+            let state = { node.state.lock().await };
+            assert_eq!(
+                new_node_state.vote_for, state.vote_for,
+                "Node should change what it vote for when see lower term"
             );
         }
     }
