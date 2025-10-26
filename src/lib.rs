@@ -70,8 +70,20 @@ impl Node {
 
         while let Some(message) = rx_guard.next().await {
             match message {
-                Message::RequestVote(msg_req, tx_res) => {}
+                Message::RequestVote(msg_req, tx_res) => {
+                    let msg_res = self.handle_request_vote(msg_req).await;
+                    let _ = tx_res.send(msg_res);
+                }
             };
+        }
+    }
+
+    async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
+        let state = self.state.lock().await;
+
+        MsgRequestVoteRes {
+            term: state.term.max(msg.term),
+            granted: false,
         }
     }
 }
