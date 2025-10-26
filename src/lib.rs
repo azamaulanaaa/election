@@ -36,15 +36,23 @@ impl Ord for LogState {
     }
 }
 
+#[derive(Default)]
+pub struct State {
+    pub vote_for: Option<u64>,
+    pub term: u64,
+}
+
 pub struct Node {
     rx: Mutex<mpsc::Receiver<Message>>,
     log_state: Mutex<LogState>,
+    state: Mutex<State>,
 }
 
 impl Node {
     pub fn new(rx: mpsc::Receiver<Message>) -> Self {
         Self {
             rx: Mutex::new(rx),
+            state: Default::default(),
             log_state: Default::default(),
         }
     }
