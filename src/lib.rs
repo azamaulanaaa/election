@@ -82,21 +82,20 @@ impl Node {
         let mut state = self.state.lock().await;
         let log_state = self.log_state.lock().await;
 
+        let granted = match Ord::cmp(&msg.term, &state.term) {
+            Ordering::Greater => true,
+            _ => false,
+        };
+        let granted = granted && msg.last_log_state >= *log_state;
+
         if state.term < msg.term {
             state.term = msg.term;
             state.kind = NodeKind::Follower;
         }
 
-        if msg.last_log_state < *log_state {
-            return MsgRequestVoteRes {
-                term: state.term,
-                granted: false,
-            };
-        }
-
         MsgRequestVoteRes {
             term: state.term,
-            granted: false,
+            granted,
         }
     }
 }
@@ -271,6 +270,62 @@ mod tests {
             let _msg_res = node.handle_request_vote(msg_req).await;
             let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.kind, NodeKind::Follower)
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_request_vote_for_higher_term() {
+        let (_tx_req, rx_req) = mpsc::channel(1);
+        let mut node = Node::new(rx_req);
+
+        let mut node_state = node.state.lock().await;
+        let new_node_states = [
+            State {
+                vote_for: None,
+                kind: NodeKind::Follower,
+                ..*node_state
+            },
+            State {
+                vote_for: None,
+                kind: NodeKind::Leader,
+                ..*node_state
+            },
+            State {
+                vote_for: Some(1),
+                kind: NodeKind::Follower,
+                ..*node_state
+            },
+            State {
+                vote_for: Some(1),
+                kind: NodeKind::Leader,
+                ..*node_state
+            },
+        ];
+        let mut new_node_state = new_node_states.into_iter();
+
+        while let Some(new_node_state) = new_node_state.next() {
+            *node_state = new_node_state;
+            let new_term = new_node_state.term + 1;
+            let new_candidate = new_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
+
+            let msg_res = node
+                .handle_request_vote(MsgRequestVoteReq {
+                    term: new_term,
+                    candidate_id: new_candidate,
+                    last_log_state: { node.log_state.lock().await.clone() },
+                })
+                .await;
+            assert!(
+                msg_res.granted,
+                "RequestVote must granted vote for higher term"
+            );
+
+            let state = { node.state.lock().await };
+            assert_eq!(
+                state.vote_for,
+                Some(new_candidate),
+                "Node should vote for candidate with higher term"
+            );
         }
     }
 }
