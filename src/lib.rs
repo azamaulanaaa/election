@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use futures::{
     StreamExt,
     channel::{mpsc, oneshot},
@@ -12,6 +14,21 @@ pub struct Message {
 pub enum MessageRequest {}
 
 pub enum MessageResponse {}
+
+#[derive(Clone, Default, PartialEq, Eq, PartialOrd)]
+pub struct LogState {
+    pub term: u64,
+    pub index: u64,
+}
+
+impl Ord for LogState {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match Ord::cmp(&self.term, &other.term) {
+            Ordering::Equal => Ord::cmp(&self.index, &other.index),
+            other => other,
+        }
+    }
+}
 
 pub struct Node {
     rx: Mutex<mpsc::Receiver<Message>>,
