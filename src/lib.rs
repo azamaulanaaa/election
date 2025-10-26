@@ -11,9 +11,24 @@ pub struct Message {
     response: oneshot::Sender<MessageResponse>,
 }
 
-pub enum MessageRequest {}
+pub enum MessageRequest {
+    RequestVote(MsgRequestVoteReq),
+}
 
-pub enum MessageResponse {}
+pub enum MessageResponse {
+    RequestVote(MsgRequestVoteRes),
+}
+
+pub struct MsgRequestVoteReq {
+    pub term: u64,
+    pub candidate_id: u64,
+    pub last_log_state: LogState,
+}
+
+pub struct MsgRequestVoteRes {
+    pub term: u64,
+    pub granted: bool,
+}
 
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd)]
 pub struct LogState {
@@ -46,7 +61,11 @@ impl Node {
     pub async fn run(&self) {
         let mut rx_guard = self.rx.lock().await;
 
-        while let Some(_message) = rx_guard.next().await {}
+        while let Some(message) = rx_guard.next().await {
+            match message.request {
+                MessageRequest::RequestVote(_msg_req) => {}
+            };
+        }
     }
 }
 
