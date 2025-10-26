@@ -6,17 +6,8 @@ use futures::{
     lock::Mutex,
 };
 
-pub struct Message {
-    request: MessageRequest,
-    response: oneshot::Sender<MessageResponse>,
-}
-
-pub enum MessageRequest {
-    RequestVote(MsgRequestVoteReq),
-}
-
-pub enum MessageResponse {
-    RequestVote(MsgRequestVoteRes),
+pub enum Message {
+    RequestVote(MsgRequestVoteReq, oneshot::Sender<MsgRequestVoteRes>),
 }
 
 pub struct MsgRequestVoteReq {
@@ -62,8 +53,8 @@ impl Node {
         let mut rx_guard = self.rx.lock().await;
 
         while let Some(message) = rx_guard.next().await {
-            match message.request {
-                MessageRequest::RequestVote(_msg_req) => {}
+            match message {
+                Message::RequestVote(msg_req, tx_res) => {}
             };
         }
     }
