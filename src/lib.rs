@@ -36,14 +36,14 @@ impl Ord for LogState {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub enum NodeKind {
     #[default]
     Leader,
     Follower,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct State {
     pub vote_for: Option<u64>,
     pub term: u64,
@@ -79,10 +79,11 @@ impl Node {
     }
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
+        state.term = state.term.max(msg.term);
 
         MsgRequestVoteRes {
-            term: state.term.max(msg.term),
+            term: state.term,
             granted: false,
         }
     }
@@ -112,6 +113,49 @@ mod tests {
             _ = node.run() => {
                 assert!(true, "Node stopped successfully");
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_request_vote_always_update_to_highest_term() {
+        let (_tx_req, rx_req) = mpsc::channel(1);
+        let node = Node::new(rx_req);
+
+        let node_state = { node.state.lock().await.clone() };
+        let node_last_log = { node.log_state.lock().await.clone() };
+        let new_term = node_state.term + 1;
+
+        let msg_reqs = [
+            MsgRequestVoteReq {
+                term: new_term,
+                candidate_id: 32,
+                last_log_state: node_last_log.clone(),
+            },
+            MsgRequestVoteReq {
+                term: new_term,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    term: node_last_log.term + 1,
+                    ..node_last_log
+                },
+            },
+            MsgRequestVoteReq {
+                term: new_term,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    index: node_last_log.index + 1,
+                    ..node_last_log
+                },
+            },
+        ];
+        let mut msg_reqs = msg_reqs.into_iter();
+
+        while let Some(msg_req) = msg_reqs.next() {
+            let msg_res = node.handle_request_vote(msg_req).await;
+            assert_eq!(msg_res.term, new_term);
+
+            let new_node_state = { node.state.lock().await.clone() };
+            assert_eq!(new_node_state.term, new_term)
         }
     }
 }
