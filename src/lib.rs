@@ -176,10 +176,13 @@ mod tests {
         let node = Node::new(rx_req);
 
         let node_state = { node.state.lock().await.clone() };
-        let mut node_last_log = node.log_state.lock().await;
-        *node_last_log = LogState {
-            term: 23,
-            index: 3289,
+        let node_last_log = {
+            let mut node_last_log = node.log_state.lock().await;
+            *node_last_log = LogState {
+                term: 23,
+                index: 3289,
+            };
+            node_last_log.clone()
         };
 
         let msg_reqs = [
@@ -188,7 +191,7 @@ mod tests {
                 candidate_id: 32,
                 last_log_state: LogState {
                     term: node_last_log.term - 1,
-                    ..*node_last_log
+                    ..node_last_log
                 },
             },
             MsgRequestVoteReq {
@@ -196,7 +199,7 @@ mod tests {
                 candidate_id: 32,
                 last_log_state: LogState {
                     index: node_last_log.index - 1,
-                    ..*node_last_log
+                    ..node_last_log
                 },
             },
             MsgRequestVoteReq {
@@ -204,7 +207,7 @@ mod tests {
                 candidate_id: 32,
                 last_log_state: LogState {
                     term: node_last_log.term - 1,
-                    ..*node_last_log
+                    ..node_last_log
                 },
             },
             MsgRequestVoteReq {
@@ -212,7 +215,7 @@ mod tests {
                 candidate_id: 32,
                 last_log_state: LogState {
                     index: node_last_log.index - 1,
-                    ..*node_last_log
+                    ..node_last_log
                 },
             },
         ];
