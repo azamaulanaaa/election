@@ -276,35 +276,38 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_for_higher_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let mut node = Node::new(rx_req);
+        let node = Node::new(rx_req);
 
-        let mut node_state = node.state.lock().await;
+        let node_state = { node.state.lock().await.clone() };
         let new_node_states = [
             State {
                 vote_for: None,
                 kind: NodeKind::Follower,
-                ..*node_state
+                ..node_state
             },
             State {
                 vote_for: None,
                 kind: NodeKind::Leader,
-                ..*node_state
+                ..node_state
             },
             State {
                 vote_for: Some(1),
                 kind: NodeKind::Follower,
-                ..*node_state
+                ..node_state
             },
             State {
                 vote_for: Some(1),
                 kind: NodeKind::Leader,
-                ..*node_state
+                ..node_state
             },
         ];
         let mut new_node_state = new_node_states.into_iter();
 
         while let Some(new_node_state) = new_node_state.next() {
-            *node_state = new_node_state;
+            {
+                let mut node_state = node.state.lock().await;
+                *node_state = new_node_state;
+            }
             let new_term = new_node_state.term + 1;
             let new_candidate = new_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
 
