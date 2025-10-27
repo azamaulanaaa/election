@@ -80,7 +80,16 @@ impl Node {
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
         let mut state = self.state.lock().await;
+        let log_state = self.log_state.lock().await;
+
         state.term = state.term.max(msg.term);
+
+        if msg.last_log_state < *log_state {
+            return MsgRequestVoteRes {
+                term: state.term,
+                granted: false,
+            };
+        }
 
         MsgRequestVoteRes {
             term: state.term,
@@ -156,6 +165,63 @@ mod tests {
 
             let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.term, new_term)
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_request_vote_reject_if_last_log_state_is_behind() {
+        let (_tx_req, rx_req) = mpsc::channel(1);
+        let node = Node::new(rx_req);
+
+        let node_state = { node.state.lock().await.clone() };
+        let mut node_last_log = node.log_state.lock().await;
+        *node_last_log = LogState {
+            term: 23,
+            index: 3289,
+        };
+
+        let msg_reqs = [
+            MsgRequestVoteReq {
+                term: node_state.term,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    term: node_last_log.term - 1,
+                    ..*node_last_log
+                },
+            },
+            MsgRequestVoteReq {
+                term: node_state.term,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    index: node_last_log.index - 1,
+                    ..*node_last_log
+                },
+            },
+            MsgRequestVoteReq {
+                term: node_state.term + 1,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    term: node_last_log.term - 1,
+                    ..*node_last_log
+                },
+            },
+            MsgRequestVoteReq {
+                term: node_state.term + 1,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    index: node_last_log.index - 1,
+                    ..*node_last_log
+                },
+            },
+        ];
+        let mut msg_reqs = msg_reqs.into_iter();
+
+        while let Some(msg_req) = msg_reqs.next() {
+            let msg_res = node.handle_request_vote(msg_req).await;
+            assert_eq!(msg_res.granted, false);
+
+            let new_node_state = { node.state.lock().await.clone() };
+            assert_eq!(new_node_state.vote_for, node_state.vote_for)
         }
     }
 }
