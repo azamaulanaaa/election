@@ -36,7 +36,7 @@ impl Ord for LogState {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub enum NodeKind {
     #[default]
     Leader,
@@ -82,7 +82,10 @@ impl Node {
         let mut state = self.state.lock().await;
         let log_state = self.log_state.lock().await;
 
-        state.term = state.term.max(msg.term);
+        if state.term < msg.term {
+            state.term = msg.term;
+            state.kind = NodeKind::Follower;
+        }
 
         if msg.last_log_state < *log_state {
             return MsgRequestVoteRes {
@@ -222,6 +225,52 @@ mod tests {
 
             let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.vote_for, node_state.vote_for)
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_request_vote_always_step_down_for_higher_term() {
+        let (_tx_req, rx_req) = mpsc::channel(1);
+        let node = Node::new(rx_req);
+
+        let mut node_state = { node.state.lock().await.clone() };
+        node_state = State {
+            kind: NodeKind::Leader,
+            ..node_state
+        };
+
+        let node_last_log = { node.log_state.lock().await.clone() };
+        let new_term = node_state.term + 1;
+
+        let msg_reqs = [
+            MsgRequestVoteReq {
+                term: new_term,
+                candidate_id: 32,
+                last_log_state: node_last_log.clone(),
+            },
+            MsgRequestVoteReq {
+                term: new_term,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    term: node_last_log.term + 1,
+                    ..node_last_log
+                },
+            },
+            MsgRequestVoteReq {
+                term: new_term,
+                candidate_id: 32,
+                last_log_state: LogState {
+                    index: node_last_log.index + 1,
+                    ..node_last_log
+                },
+            },
+        ];
+        let mut msg_reqs = msg_reqs.into_iter();
+
+        while let Some(msg_req) = msg_reqs.next() {
+            let _msg_res = node.handle_request_vote(msg_req).await;
+            let new_node_state = { node.state.lock().await.clone() };
+            assert_eq!(new_node_state.kind, NodeKind::Follower)
         }
     }
 }
