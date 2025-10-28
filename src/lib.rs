@@ -53,14 +53,16 @@ pub struct NodeState {
 }
 
 pub struct Node {
+    id: usize,
     rx: Mutex<mpsc::Receiver<Message>>,
     log_state: Mutex<LogState>,
     node_state: Mutex<NodeState>,
 }
 
 impl Node {
-    pub fn new(rx: mpsc::Receiver<Message>) -> Self {
+    pub fn new(id: usize, rx: mpsc::Receiver<Message>) -> Self {
         Self {
+            id,
             rx: Mutex::new(rx),
             node_state: Default::default(),
             log_state: Default::default(),
@@ -118,7 +120,7 @@ mod tests {
     #[tokio::test]
     async fn stop_run_when_no_sender() {
         let (tx, rx) = mpsc::channel(1);
-        let node = Node::new(rx);
+        let node = Node::new(1, rx);
         let timeout = time::Duration::from_millis(100);
 
         {
@@ -138,7 +140,7 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_always_update_to_highest_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(rx_req);
+        let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
         let node_last_log = { node.log_state.lock().await.clone() };
@@ -181,7 +183,7 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_reject_if_last_log_state_is_behind() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(rx_req);
+        let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
         let node_last_log = {
@@ -241,7 +243,7 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_always_step_down_for_higher_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(rx_req);
+        let node = Node::new(1, rx_req);
 
         let mut node_state = { node.node_state.lock().await.clone() };
         node_state = NodeState {
@@ -287,7 +289,7 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_for_higher_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(rx_req);
+        let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
         let init_node_states = [
@@ -346,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_for_lower_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(rx_req);
+        let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
         let init_node_states = [
@@ -408,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_for_equal_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(rx_req);
+        let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
         let node_states = [
