@@ -46,7 +46,7 @@ pub enum NodeKind {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct State {
+pub struct NodeState {
     pub vote_for: Option<u64>,
     pub term: u64,
     pub kind: NodeKind,
@@ -55,14 +55,14 @@ pub struct State {
 pub struct Node {
     rx: Mutex<mpsc::Receiver<Message>>,
     log_state: Mutex<LogState>,
-    state: Mutex<State>,
+    node_state: Mutex<NodeState>,
 }
 
 impl Node {
     pub fn new(rx: mpsc::Receiver<Message>) -> Self {
         Self {
             rx: Mutex::new(rx),
-            state: Default::default(),
+            node_state: Default::default(),
             log_state: Default::default(),
         }
     }
@@ -81,28 +81,28 @@ impl Node {
     }
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
-        let mut state = self.state.lock().await;
+        let mut node_state = self.node_state.lock().await;
         let log_state = self.log_state.lock().await;
 
-        let granted = match Ord::cmp(&msg.term, &state.term) {
+        let granted = match Ord::cmp(&msg.term, &node_state.term) {
             Ordering::Greater => true,
             Ordering::Less => false,
-            Ordering::Equal => state
+            Ordering::Equal => node_state
                 .vote_for
                 .is_none_or(|vote_for| vote_for == msg.candidate_id),
         };
         let granted = granted && msg.last_log_state >= *log_state;
         if granted {
-            state.vote_for = Some(msg.candidate_id);
+            node_state.vote_for = Some(msg.candidate_id);
         }
 
-        if state.term < msg.term {
-            state.term = msg.term;
-            state.kind = NodeKind::Follower;
+        if node_state.term < msg.term {
+            node_state.term = msg.term;
+            node_state.kind = NodeKind::Follower;
         }
 
         MsgRequestVoteRes {
-            term: state.term,
+            term: node_state.term,
             granted,
         }
     }
@@ -140,7 +140,7 @@ mod tests {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(rx_req);
 
-        let node_state = { node.state.lock().await.clone() };
+        let node_state = { node.node_state.lock().await.clone() };
         let node_last_log = { node.log_state.lock().await.clone() };
         let new_term = node_state.term + 1;
 
@@ -173,7 +173,7 @@ mod tests {
             let msg_res = node.handle_request_vote(msg_req).await;
             assert_eq!(msg_res.term, new_term);
 
-            let new_node_state = { node.state.lock().await.clone() };
+            let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.term, new_term)
         }
     }
@@ -183,7 +183,7 @@ mod tests {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(rx_req);
 
-        let node_state = { node.state.lock().await.clone() };
+        let node_state = { node.node_state.lock().await.clone() };
         let node_last_log = {
             let mut node_last_log = node.log_state.lock().await;
             *node_last_log = LogState {
@@ -233,7 +233,7 @@ mod tests {
             let msg_res = node.handle_request_vote(msg_req).await;
             assert_eq!(msg_res.granted, false);
 
-            let new_node_state = { node.state.lock().await.clone() };
+            let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.vote_for, node_state.vote_for)
         }
     }
@@ -243,8 +243,8 @@ mod tests {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(rx_req);
 
-        let mut node_state = { node.state.lock().await.clone() };
-        node_state = State {
+        let mut node_state = { node.node_state.lock().await.clone() };
+        node_state = NodeState {
             kind: NodeKind::Leader,
             ..node_state
         };
@@ -279,7 +279,7 @@ mod tests {
 
         while let Some(msg_req) = msg_reqs.next() {
             let _msg_res = node.handle_request_vote(msg_req).await;
-            let new_node_state = { node.state.lock().await.clone() };
+            let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.kind, NodeKind::Follower)
         }
     }
@@ -289,24 +289,24 @@ mod tests {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(rx_req);
 
-        let node_state = { node.state.lock().await.clone() };
+        let node_state = { node.node_state.lock().await.clone() };
         let new_node_states = [
-            State {
+            NodeState {
                 vote_for: None,
                 kind: NodeKind::Follower,
                 ..node_state
             },
-            State {
+            NodeState {
                 vote_for: None,
                 kind: NodeKind::Leader,
                 ..node_state
             },
-            State {
+            NodeState {
                 vote_for: Some(1),
                 kind: NodeKind::Follower,
                 ..node_state
             },
-            State {
+            NodeState {
                 vote_for: Some(1),
                 kind: NodeKind::Leader,
                 ..node_state
@@ -316,7 +316,7 @@ mod tests {
 
         while let Some(new_node_state) = new_node_state.next() {
             {
-                let mut node_state = node.state.lock().await;
+                let mut node_state = node.node_state.lock().await;
                 *node_state = new_node_state;
             }
             let new_term = new_node_state.term + 1;
@@ -334,9 +334,9 @@ mod tests {
                 "RequestVote must granted vote for higher term"
             );
 
-            let state = { node.state.lock().await };
+            let node_state = { node.node_state.lock().await };
             assert_eq!(
-                state.vote_for,
+                node_state.vote_for,
                 Some(new_candidate),
                 "Node should vote for candidate with higher term"
             );
@@ -348,27 +348,27 @@ mod tests {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(rx_req);
 
-        let node_state = { node.state.lock().await.clone() };
+        let node_state = { node.node_state.lock().await.clone() };
         let new_node_states = [
-            State {
+            NodeState {
                 term: 10,
                 vote_for: None,
                 kind: NodeKind::Follower,
                 ..node_state
             },
-            State {
+            NodeState {
                 term: 10,
                 vote_for: None,
                 kind: NodeKind::Leader,
                 ..node_state
             },
-            State {
+            NodeState {
                 term: 10,
                 vote_for: Some(1),
                 kind: NodeKind::Follower,
                 ..node_state
             },
-            State {
+            NodeState {
                 term: 10,
                 vote_for: Some(1),
                 kind: NodeKind::Leader,
@@ -379,7 +379,7 @@ mod tests {
 
         while let Some(new_node_state) = new_node_state.next() {
             {
-                let mut node_state = node.state.lock().await;
+                let mut node_state = node.node_state.lock().await;
                 *node_state = new_node_state;
             }
             let new_term = new_node_state.term - 1;
@@ -397,9 +397,9 @@ mod tests {
                 "RequestVote must not granted vote for lower term"
             );
 
-            let state = { node.state.lock().await };
+            let node_state = { node.node_state.lock().await };
             assert_eq!(
-                new_node_state.vote_for, state.vote_for,
+                new_node_state.vote_for, node_state.vote_for,
                 "Node should change what it vote for when see lower term"
             );
         }
@@ -410,24 +410,24 @@ mod tests {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(rx_req);
 
-        let node_state = { node.state.lock().await.clone() };
+        let node_state = { node.node_state.lock().await.clone() };
         let node_states = [
-            State {
+            NodeState {
                 vote_for: None,
                 kind: NodeKind::Follower,
                 ..node_state
             },
-            State {
+            NodeState {
                 vote_for: None,
                 kind: NodeKind::Leader,
                 ..node_state
             },
-            State {
+            NodeState {
                 vote_for: Some(1),
                 kind: NodeKind::Follower,
                 ..node_state
             },
-            State {
+            NodeState {
                 vote_for: Some(1),
                 kind: NodeKind::Leader,
                 ..node_state
@@ -437,7 +437,7 @@ mod tests {
 
         while let Some(init_node_state) = node_states.next() {
             {
-                let mut node_state = node.state.lock().await;
+                let mut node_state = node.node_state.lock().await;
                 *node_state = init_node_state;
             }
 
@@ -465,7 +465,7 @@ mod tests {
                                 msg_res.granted,
                                 "RequestVote must granted vote when voting for same candidate"
                             );
-                            let node_state = { node.state.lock().await };
+                            let node_state = { node.node_state.lock().await };
                             assert_eq!(
                                 node_state.vote_for, init_node_state.vote_for,
                                 "Node should not change vote for when voting for same candidate"
@@ -476,7 +476,7 @@ mod tests {
                                 "RequestVote must not grant vote when not voting for different candidate"
                             );
 
-                            let node_state = { node.state.lock().await };
+                            let node_state = { node.node_state.lock().await };
                             assert_eq!(
                                 node_state.vote_for, init_node_state.vote_for,
                                 "Node should not change vote for when not voting for diffent candidate"
@@ -489,7 +489,7 @@ mod tests {
                             "RequestVote must granted vote when not voting for any candidate"
                         );
 
-                        let node_state = { node.state.lock().await };
+                        let node_state = { node.node_state.lock().await };
                         assert_eq!(
                             node_state.vote_for,
                             Some(msg_req.candidate_id),
