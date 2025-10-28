@@ -290,7 +290,7 @@ mod tests {
         let node = Node::new(rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let new_node_states = [
+        let init_node_states = [
             NodeState {
                 vote_for: None,
                 kind: NodeKind::Follower,
@@ -312,15 +312,15 @@ mod tests {
                 ..node_state
             },
         ];
-        let mut new_node_state = new_node_states.into_iter();
+        let mut init_node_states = init_node_states.into_iter();
 
-        while let Some(new_node_state) = new_node_state.next() {
+        while let Some(init_node_state) = init_node_states.next() {
             {
                 let mut node_state = node.node_state.lock().await;
-                *node_state = new_node_state;
+                *node_state = init_node_state;
             }
-            let new_term = new_node_state.term + 1;
-            let new_candidate = new_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
+            let new_term = init_node_state.term + 1;
+            let new_candidate = init_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
 
             let msg_res = node
                 .handle_request_vote(MsgRequestVoteReq {
@@ -349,7 +349,7 @@ mod tests {
         let node = Node::new(rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let new_node_states = [
+        let init_node_states = [
             NodeState {
                 term: 10,
                 vote_for: None,
@@ -375,15 +375,15 @@ mod tests {
                 ..node_state
             },
         ];
-        let mut new_node_state = new_node_states.into_iter();
+        let mut init_node_states = init_node_states.into_iter();
 
-        while let Some(new_node_state) = new_node_state.next() {
+        while let Some(init_node_state) = init_node_states.next() {
             {
                 let mut node_state = node.node_state.lock().await;
-                *node_state = new_node_state;
+                *node_state = init_node_state;
             }
-            let new_term = new_node_state.term - 1;
-            let new_candidate = new_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
+            let new_term = init_node_state.term - 1;
+            let new_candidate = init_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
 
             let msg_res = node
                 .handle_request_vote(MsgRequestVoteReq {
@@ -399,7 +399,7 @@ mod tests {
 
             let node_state = { node.node_state.lock().await };
             assert_eq!(
-                new_node_state.vote_for, node_state.vote_for,
+                init_node_state.vote_for, node_state.vote_for,
                 "Node should change what it vote for when see lower term"
             );
         }
