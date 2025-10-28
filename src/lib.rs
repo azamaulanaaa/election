@@ -6,7 +6,12 @@ use futures::{
     lock::Mutex,
 };
 
-pub enum Message {
+pub struct Message {
+    node_id: usize,
+    body: MessageBody,
+}
+
+pub enum MessageBody {
     RequestVote(MsgRequestVoteReq, oneshot::Sender<MsgRequestVoteRes>),
 }
 
@@ -73,8 +78,8 @@ impl Node {
         let mut rx_guard = self.rx.lock().await;
 
         while let Some(message) = rx_guard.next().await {
-            match message {
-                Message::RequestVote(msg_req, tx_res) => {
+            match message.body {
+                MessageBody::RequestVote(msg_req, tx_res) => {
                     let msg_res = self.handle_request_vote(msg_req).await;
                     let _ = tx_res.send(msg_res);
                 }
