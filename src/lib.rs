@@ -10,18 +10,20 @@ pub enum Message {
     RequestVote(MsgRequestVoteReq, oneshot::Sender<MsgRequestVoteRes>),
 }
 
+#[derive(Clone, Copy)]
 pub struct MsgRequestVoteReq {
     pub term: u64,
     pub candidate_id: u64,
     pub last_log_state: LogState,
 }
 
+#[derive(Clone, Copy)]
 pub struct MsgRequestVoteRes {
     pub term: u64,
     pub granted: bool,
 }
 
-#[derive(Clone, Default, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd)]
 pub struct LogState {
     pub term: u64,
     pub index: u64,
@@ -85,7 +87,9 @@ impl Node {
         let granted = match Ord::cmp(&msg.term, &state.term) {
             Ordering::Greater => true,
             Ordering::Less => false,
-            _ => false,
+            Ordering::Equal => state
+                .vote_for
+                .is_none_or(|vote_for| vote_for == msg.candidate_id),
         };
         let granted = granted && msg.last_log_state >= *log_state;
         if granted {
@@ -398,6 +402,102 @@ mod tests {
                 new_node_state.vote_for, state.vote_for,
                 "Node should change what it vote for when see lower term"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_request_vote_for_equal_term() {
+        let (_tx_req, rx_req) = mpsc::channel(1);
+        let node = Node::new(rx_req);
+
+        let node_state = { node.state.lock().await.clone() };
+        let node_states = [
+            State {
+                vote_for: None,
+                kind: NodeKind::Follower,
+                ..node_state
+            },
+            State {
+                vote_for: None,
+                kind: NodeKind::Leader,
+                ..node_state
+            },
+            State {
+                vote_for: Some(1),
+                kind: NodeKind::Follower,
+                ..node_state
+            },
+            State {
+                vote_for: Some(1),
+                kind: NodeKind::Leader,
+                ..node_state
+            },
+        ];
+        let mut node_states = node_states.into_iter();
+
+        while let Some(init_node_state) = node_states.next() {
+            {
+                let mut node_state = node.state.lock().await;
+                *node_state = init_node_state;
+            }
+
+            let msg_reqs = [
+                MsgRequestVoteReq {
+                    term: init_node_state.term,
+                    candidate_id: init_node_state.vote_for.unwrap_or(1),
+                    last_log_state: { node.log_state.lock().await.clone() },
+                },
+                MsgRequestVoteReq {
+                    term: init_node_state.term,
+                    candidate_id: init_node_state.vote_for.map_or(1, |vote_for| vote_for + 1),
+                    last_log_state: { node.log_state.lock().await.clone() },
+                },
+            ];
+            let mut msg_reqs = msg_reqs.into_iter();
+
+            while let Some(msg_req) = msg_reqs.next() {
+                let msg_res = node.handle_request_vote(msg_req.clone()).await;
+
+                match init_node_state.vote_for {
+                    Some(candidate) => {
+                        if candidate == msg_req.candidate_id {
+                            assert!(
+                                msg_res.granted,
+                                "RequestVote must granted vote when voting for same candidate"
+                            );
+                            let node_state = { node.state.lock().await };
+                            assert_eq!(
+                                node_state.vote_for, init_node_state.vote_for,
+                                "Node should not change vote for when voting for same candidate"
+                            );
+                        } else {
+                            assert!(
+                                !msg_res.granted,
+                                "RequestVote must not grant vote when not voting for different candidate"
+                            );
+
+                            let node_state = { node.state.lock().await };
+                            assert_eq!(
+                                node_state.vote_for, init_node_state.vote_for,
+                                "Node should not change vote for when not voting for diffent candidate"
+                            );
+                        }
+                    }
+                    None => {
+                        assert!(
+                            msg_res.granted,
+                            "RequestVote must granted vote when not voting for any candidate"
+                        );
+
+                        let node_state = { node.state.lock().await };
+                        assert_eq!(
+                            node_state.vote_for,
+                            Some(msg_req.candidate_id),
+                            "Node should vote for given candidate when not voting for any candidate"
+                        );
+                    }
+                }
+            }
         }
     }
 }
