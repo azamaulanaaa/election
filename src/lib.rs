@@ -31,7 +31,7 @@ pub struct NodeState {
 pub struct Node<S, E>
 where
     S: Storage<E>,
-    E: Clone,
+    E: Clone + Send + Sync,
 {
     id: usize,
     rx: Mutex<mpsc::Receiver<Message<E>>>,
@@ -42,7 +42,7 @@ where
 impl<S, E> Node<S, E>
 where
     S: Storage<E>,
-    E: Clone,
+    E: Clone + Send + Sync,
 {
     pub fn new(id: usize, rx: mpsc::Receiver<Message<E>>, storage: S) -> Self {
         Self {

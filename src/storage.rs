@@ -19,9 +19,10 @@ where
     pub entry: E,
 }
 
-pub trait Storage<E>
+#[async_trait::async_trait]
+pub trait Storage<E>: Sync
 where
-    E: Clone,
+    E: Clone + Send + Sync,
 {
     async fn push(&self, value: StorageValue<E>) -> Result<(), StorageError>;
     async fn get(&self, index: u64) -> Result<StorageValue<E>, StorageError>;
@@ -46,14 +47,15 @@ where
 #[derive(Default)]
 pub struct MemStorage<E>
 where
-    E: Clone,
+    E: Clone + Send + Sync,
 {
     vector: RwLock<Vec<StorageValue<E>>>,
 }
 
+#[async_trait::async_trait]
 impl<E> Storage<E> for MemStorage<E>
 where
-    E: Clone,
+    E: Clone + Send + Sync,
 {
     async fn push(&self, value: StorageValue<E>) -> Result<(), StorageError> {
         self.vector.write().await.push(value);
