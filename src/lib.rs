@@ -63,7 +63,7 @@ where
                     let _ = tx_res.send(msg_res);
                 }
                 MessageBody::AppendEntries(msg_req, tx_res) => {
-                    let msg_res = self.handle_append_entries(msg_req).await;
+                    let msg_res = self.handle_append_entries(message.node_id, msg_req).await;
                     let _ = tx_res.send(msg_res);
                 }
             };
@@ -97,7 +97,11 @@ where
         }
     }
 
-    async fn handle_append_entries(&self, msg: MsgAppendEntriesReq<E>) -> MsgAppendEntriesRes {
+    async fn handle_append_entries(
+        &self,
+        from: u64,
+        msg: MsgAppendEntriesReq<E>,
+    ) -> MsgAppendEntriesRes {
         let mut node_state = self.node_state.lock().await;
 
         if node_state.term < msg.term {
@@ -566,7 +570,7 @@ mod tests {
         let mut msg_reqs = msg_reqs.into_iter();
 
         while let Some(msg_req) = msg_reqs.next() {
-            let msg_res = node.handle_append_entries(msg_req).await;
+            let msg_res = node.handle_append_entries(1, msg_req).await;
             assert_eq!(msg_res.term, new_term);
 
             let new_node_state = { node.node_state.lock().await.clone() };
@@ -618,7 +622,7 @@ mod tests {
         let mut msg_reqs = msg_reqs.into_iter();
 
         while let Some(msg_req) = msg_reqs.next() {
-            let _msg_res = node.handle_append_entries(msg_req).await;
+            let _msg_res = node.handle_append_entries(1, msg_req).await;
             let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.kind, NodeKind::Follower)
         }
