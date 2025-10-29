@@ -6,7 +6,7 @@ pub struct Message<E>
 where
     E: Clone,
 {
-    pub node_id: usize,
+    pub node_id: u64,
     pub body: MessageBody<E>,
 }
 
