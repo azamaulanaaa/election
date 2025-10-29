@@ -1,4 +1,4 @@
-mod storage;
+pub mod storage;
 
 use std::{cmp::Ordering, marker::PhantomData};
 
