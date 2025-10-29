@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_vote_always_update_to_highest_term() {
+    async fn handle_request_vote_update_to_highest_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx_req, mem_storage);
@@ -261,7 +261,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_vote_always_step_down_for_higher_term() {
+    async fn handle_request_vote_step_down_for_higher_term() {
         let (_tx, rx) = mpsc::channel(1);
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
@@ -581,7 +581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_append_entries_always_step_down_for_higher_term() {
+    async fn handle_append_entries_step_down_for_higher_term() {
         let (_tx, rx) = mpsc::channel(1);
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
