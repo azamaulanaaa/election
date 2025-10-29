@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use async_lock::RwLock;
 
 #[derive(thiserror::Error, Debug)]
@@ -25,6 +27,20 @@ where
     async fn get(&self, index: u64) -> Result<StorageValue<E>, StorageError>;
     async fn truncate(&self, index: u64) -> Result<(), StorageError>;
     async fn last_index(&self) -> Result<u64, StorageError>;
+
+    async fn last_state(&self) -> Result<StorageState, StorageError> {
+        let index = self.last_index().await?;
+        if index == 0 {
+            return Ok(StorageState::default());
+        }
+
+        let value = self.get(index).await?;
+
+        Ok(StorageState {
+            index,
+            term: value.term,
+        })
+    }
 }
 
 #[derive(Default)]
@@ -78,5 +94,20 @@ where
 
     async fn last_index(&self) -> Result<u64, StorageError> {
         Ok(self.vector.read().await.len() as u64)
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd)]
+pub struct StorageState {
+    pub term: u64,
+    pub index: u64,
+}
+
+impl Ord for StorageState {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match Ord::cmp(&self.term, &other.term) {
+            Ordering::Equal => Ord::cmp(&self.index, &other.index),
+            other => other,
+        }
     }
 }
