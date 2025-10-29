@@ -26,6 +26,7 @@ pub struct NodeState {
     pub term: u64,
     pub kind: NodeKind,
     pub commited_index: u64,
+    pub leader_id: u64,
 }
 
 pub struct Node<S, E>
@@ -106,6 +107,7 @@ where
 
         if node_state.term < msg.term {
             node_state.kind = NodeKind::Follower;
+            node_state.leader_id = from;
         }
         node_state.term = node_state.term.max(msg.term);
 
@@ -625,6 +627,53 @@ mod tests {
             let _msg_res = node.handle_append_entries(1, msg_req).await;
             let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.kind, NodeKind::Follower)
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_update_leader_id_with_higher_term() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let node_state = { node.node_state.lock().await.clone() };
+
+        let last_storage_state = node.storage.last_state().await.unwrap();
+        let new_term = node_state.term + 1;
+        let new_leader_id = node_state.leader_id + 1;
+
+        let msg_reqs = [
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: last_storage_state.clone(),
+            },
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: StorageState {
+                    term: last_storage_state.term + 1,
+                    ..last_storage_state
+                },
+            },
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: StorageState {
+                    index: last_storage_state.index + 1,
+                    ..last_storage_state
+                },
+            },
+        ];
+        let mut msg_reqs = msg_reqs.into_iter();
+
+        while let Some(msg_req) = msg_reqs.next() {
+            let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
+            let new_node_state = { node.node_state.lock().await.clone() };
+            assert_eq!(new_node_state.leader_id, new_leader_id)
         }
     }
 }
