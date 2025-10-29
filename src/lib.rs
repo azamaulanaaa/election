@@ -1,7 +1,7 @@
 pub mod message;
 pub mod storage;
 
-use std::{cmp::Ordering, marker::PhantomData};
+use std::cmp::Ordering;
 
 use futures::{StreamExt, channel::mpsc, lock::Mutex};
 
@@ -30,10 +30,9 @@ where
     E: Clone,
 {
     id: usize,
-    rx: Mutex<mpsc::Receiver<Message>>,
+    rx: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
     node_state: Mutex<NodeState>,
-    _entity: PhantomData<E>,
 }
 
 impl<S, E> Node<S, E>
@@ -41,13 +40,12 @@ where
     S: Storage<E>,
     E: Clone,
 {
-    pub fn new(id: usize, rx: mpsc::Receiver<Message>, storage: S) -> Self {
+    pub fn new(id: usize, rx: mpsc::Receiver<Message<E>>, storage: S) -> Self {
         Self {
             id,
             rx: Mutex::new(rx),
             node_state: Default::default(),
             storage,
-            _entity: Default::default(),
         }
     }
 
@@ -60,6 +58,7 @@ where
                     let msg_res = self.handle_request_vote(msg_req).await;
                     let _ = tx_res.send(msg_res);
                 }
+                _ => todo!(),
             };
         }
     }
