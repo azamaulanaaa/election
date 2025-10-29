@@ -1,36 +1,14 @@
+pub mod message;
 pub mod storage;
 
 use std::{cmp::Ordering, marker::PhantomData};
 
-use futures::{
-    StreamExt,
-    channel::{mpsc, oneshot},
-    lock::Mutex,
+use futures::{StreamExt, channel::mpsc, lock::Mutex};
+
+use crate::{
+    message::{Message, MessageBody, MsgRequestVoteReq, MsgRequestVoteRes},
+    storage::{Storage, StorageState},
 };
-
-use crate::storage::{Storage, StorageState};
-
-pub struct Message {
-    node_id: usize,
-    body: MessageBody,
-}
-
-pub enum MessageBody {
-    RequestVote(MsgRequestVoteReq, oneshot::Sender<MsgRequestVoteRes>),
-}
-
-#[derive(Clone, Copy)]
-pub struct MsgRequestVoteReq {
-    pub term: u64,
-    pub candidate_id: u64,
-    pub last_storage_state: StorageState,
-}
-
-#[derive(Clone, Copy)]
-pub struct MsgRequestVoteRes {
-    pub term: u64,
-    pub granted: bool,
-}
 
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub enum NodeKind {
