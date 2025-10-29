@@ -266,10 +266,13 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let mut node_state = { node.node_state.lock().await.clone() };
-        node_state = NodeState {
-            kind: NodeKind::Leader,
-            ..node_state
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            *node_state = NodeState {
+                kind: NodeKind::Leader,
+                ..*node_state
+            };
+            node_state.clone()
         };
 
         let last_storage_state = node.storage.last_state().await.unwrap();
@@ -586,10 +589,13 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let mut node_state = { node.node_state.lock().await.clone() };
-        node_state = NodeState {
-            kind: NodeKind::Leader,
-            ..node_state
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            *node_state = NodeState {
+                kind: NodeKind::Leader,
+                ..*node_state
+            };
+            node_state.clone()
         };
 
         let last_storage_state = node.storage.last_state().await.unwrap();
