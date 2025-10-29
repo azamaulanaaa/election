@@ -1,6 +1,6 @@
 mod storage;
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, marker::PhantomData};
 
 use futures::{
     StreamExt,
@@ -8,7 +8,7 @@ use futures::{
     lock::Mutex,
 };
 
-use crate::storage::StorageState;
+use crate::storage::{Storage, StorageState};
 
 pub struct Message {
     node_id: usize,
@@ -46,20 +46,30 @@ pub struct NodeState {
     pub kind: NodeKind,
 }
 
-pub struct Node {
+pub struct Node<S, E>
+where
+    S: Storage<E>,
+    E: Clone,
+{
     id: usize,
     rx: Mutex<mpsc::Receiver<Message>>,
-    storage_state: Mutex<StorageState>,
+    storage: S,
     node_state: Mutex<NodeState>,
+    _entity: PhantomData<E>,
 }
 
-impl Node {
-    pub fn new(id: usize, rx: mpsc::Receiver<Message>) -> Self {
+impl<S, E> Node<S, E>
+where
+    S: Storage<E>,
+    E: Clone,
+{
+    pub fn new(id: usize, rx: mpsc::Receiver<Message>, storage: S) -> Self {
         Self {
             id,
             rx: Mutex::new(rx),
             node_state: Default::default(),
-            storage_state: Default::default(),
+            storage,
+            _entity: Default::default(),
         }
     }
 
@@ -78,7 +88,7 @@ impl Node {
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
         let mut node_state = self.node_state.lock().await;
-        let storage_state = self.storage_state.lock().await;
+        let last_storage_state = self.storage.last_state().await.unwrap();
 
         let granted = match Ord::cmp(&msg.term, &node_state.term) {
             Ordering::Greater => true,
@@ -87,7 +97,7 @@ impl Node {
                 .vote_for
                 .is_none_or(|vote_for| vote_for == msg.candidate_id),
         };
-        let granted = granted && msg.last_storage_state >= *storage_state;
+        let granted = granted && msg.last_storage_state >= last_storage_state;
         if granted {
             node_state.vote_for = Some(msg.candidate_id);
         }
@@ -109,12 +119,15 @@ mod tests {
     use futures::channel::mpsc;
     use tokio::time;
 
+    use crate::storage::{MemStorage, StorageValue};
+
     use super::*;
 
     #[tokio::test]
     async fn stop_run_when_no_sender() {
         let (tx, rx) = mpsc::channel(1);
-        let node = Node::new(1, rx);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
         let timeout = time::Duration::from_millis(100);
 
         {
@@ -134,32 +147,33 @@ mod tests {
     #[tokio::test]
     async fn handle_request_vote_always_update_to_highest_term() {
         let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(1, rx_req);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx_req, mem_storage);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let node_last_storage_state = { node.storage_state.lock().await.clone() };
+        let last_storage_state = node.storage.last_state().await.unwrap();
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_storage_state: node_last_storage_state.clone(),
+                last_storage_state: last_storage_state.clone(),
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    term: node_last_storage_state.term + 1,
-                    ..node_last_storage_state
+                    term: last_storage_state.term + 1,
+                    ..last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    index: node_last_storage_state.index + 1,
-                    ..node_last_storage_state
+                    index: last_storage_state.index + 1,
+                    ..last_storage_state
                 },
             },
         ];
@@ -176,17 +190,25 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_vote_reject_if_last_storage_state_is_behind() {
-        let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(1, rx_req);
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
-        let node_last_storage_state = {
-            let mut node_last_storage_state = node.storage_state.lock().await;
-            *node_last_storage_state = StorageState {
-                term: 23,
-                index: 3289,
-            };
-            node_last_storage_state.clone()
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            node_state.term = node_state.term + 1;
+            node_state.clone()
+        };
+        let last_storage_state = {
+            node.storage
+                .push(StorageValue {
+                    term: node_state.term,
+                    entry: 0,
+                })
+                .await
+                .unwrap();
+            let last_storage_state = node.storage.last_state().await.unwrap();
+            last_storage_state
         };
 
         let msg_reqs = [
@@ -194,32 +216,32 @@ mod tests {
                 term: node_state.term,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    term: node_last_storage_state.term - 1,
-                    ..node_last_storage_state
+                    term: last_storage_state.term - 1,
+                    ..last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: node_state.term,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    index: node_last_storage_state.index - 1,
-                    ..node_last_storage_state
+                    index: last_storage_state.index - 1,
+                    ..last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: node_state.term + 1,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    term: node_last_storage_state.term - 1,
-                    ..node_last_storage_state
+                    term: last_storage_state.term - 1,
+                    ..last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: node_state.term + 1,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    index: node_last_storage_state.index - 1,
-                    ..node_last_storage_state
+                    index: last_storage_state.index - 1,
+                    ..last_storage_state
                 },
             },
         ];
@@ -236,8 +258,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_vote_always_step_down_for_higher_term() {
-        let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(1, rx_req);
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
 
         let mut node_state = { node.node_state.lock().await.clone() };
         node_state = NodeState {
@@ -245,29 +268,29 @@ mod tests {
             ..node_state
         };
 
-        let node_last_storage_state = { node.storage_state.lock().await.clone() };
+        let last_storage_state = node.storage.last_state().await.unwrap();
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_storage_state: node_last_storage_state.clone(),
+                last_storage_state: last_storage_state.clone(),
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    term: node_last_storage_state.term + 1,
-                    ..node_last_storage_state
+                    term: last_storage_state.term + 1,
+                    ..last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
                 last_storage_state: StorageState {
-                    index: node_last_storage_state.index + 1,
-                    ..node_last_storage_state
+                    index: last_storage_state.index + 1,
+                    ..last_storage_state
                 },
             },
         ];
@@ -282,8 +305,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_vote_for_higher_term() {
-        let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(1, rx_req);
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
 
         let node_state = { node.node_state.lock().await.clone() };
         let init_node_states = [
@@ -310,6 +334,8 @@ mod tests {
         ];
         let mut init_node_states = init_node_states.into_iter();
 
+        let last_storage_state = node.storage.last_state().await.unwrap();
+
         while let Some(init_node_state) = init_node_states.next() {
             {
                 let mut node_state = node.node_state.lock().await;
@@ -322,7 +348,7 @@ mod tests {
                 .handle_request_vote(MsgRequestVoteReq {
                     term: new_term,
                     candidate_id: new_candidate,
-                    last_storage_state: { node.storage_state.lock().await.clone() },
+                    last_storage_state,
                 })
                 .await;
             assert!(
@@ -341,8 +367,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_vote_for_lower_term() {
-        let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(1, rx_req);
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
 
         let node_state = { node.node_state.lock().await.clone() };
         let init_node_states = [
@@ -373,6 +400,8 @@ mod tests {
         ];
         let mut init_node_states = init_node_states.into_iter();
 
+        let last_storage_state = node.storage.last_state().await.unwrap();
+
         while let Some(init_node_state) = init_node_states.next() {
             {
                 let mut node_state = node.node_state.lock().await;
@@ -385,7 +414,7 @@ mod tests {
                 .handle_request_vote(MsgRequestVoteReq {
                     term: new_term,
                     candidate_id: new_candidate,
-                    last_storage_state: { node.storage_state.lock().await.clone() },
+                    last_storage_state,
                 })
                 .await;
             assert!(
@@ -403,8 +432,9 @@ mod tests {
 
     #[tokio::test]
     async fn handle_request_vote_for_equal_term() {
-        let (_tx_req, rx_req) = mpsc::channel(1);
-        let node = Node::new(1, rx_req);
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
 
         let node_state = { node.node_state.lock().await.clone() };
         let node_states = [
@@ -431,6 +461,8 @@ mod tests {
         ];
         let mut node_states = node_states.into_iter();
 
+        let last_storage_state = node.storage.last_state().await.unwrap();
+
         while let Some(init_node_state) = node_states.next() {
             {
                 let mut node_state = node.node_state.lock().await;
@@ -441,12 +473,12 @@ mod tests {
                 MsgRequestVoteReq {
                     term: init_node_state.term,
                     candidate_id: init_node_state.vote_for.unwrap_or(1),
-                    last_storage_state: { node.storage_state.lock().await.clone() },
+                    last_storage_state,
                 },
                 MsgRequestVoteReq {
                     term: init_node_state.term,
                     candidate_id: init_node_state.vote_for.map_or(1, |vote_for| vote_for + 1),
-                    last_storage_state: { node.storage_state.lock().await.clone() },
+                    last_storage_state,
                 },
             ];
             let mut msg_reqs = msg_reqs.into_iter();
