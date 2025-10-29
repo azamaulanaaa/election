@@ -7,7 +7,7 @@ use futures::{StreamExt, channel::mpsc, lock::Mutex};
 
 use crate::{
     message::{Message, MessageBody, MsgRequestVoteReq, MsgRequestVoteRes},
-    storage::{Storage, StorageState},
+    storage::Storage,
 };
 
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
@@ -97,7 +97,7 @@ mod tests {
     use futures::channel::mpsc;
     use tokio::time;
 
-    use crate::storage::{MemStorage, StorageValue};
+    use crate::storage::{MemStorage, StorageState, StorageValue};
 
     use super::*;
 
