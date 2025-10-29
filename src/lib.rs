@@ -6,7 +6,10 @@ use std::cmp::Ordering;
 use futures::{StreamExt, channel::mpsc, lock::Mutex};
 
 use crate::{
-    message::{Message, MessageBody, MsgRequestVoteReq, MsgRequestVoteRes},
+    message::{
+        Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
+        MsgRequestVoteRes,
+    },
     storage::Storage,
 };
 
@@ -22,6 +25,7 @@ pub struct NodeState {
     pub vote_for: Option<u64>,
     pub term: u64,
     pub kind: NodeKind,
+    pub commited_index: u64,
 }
 
 pub struct Node<S, E>
@@ -58,7 +62,10 @@ where
                     let msg_res = self.handle_request_vote(msg_req).await;
                     let _ = tx_res.send(msg_res);
                 }
-                _ => todo!(),
+                MessageBody::AppendEntries(msg_req, tx_res) => {
+                    let msg_res = self.handle_append_entries(msg_req).await;
+                    let _ = tx_res.send(msg_res);
+                }
             };
         }
     }
@@ -87,6 +94,17 @@ where
         MsgRequestVoteRes {
             term: node_state.term,
             granted,
+        }
+    }
+
+    async fn handle_append_entries(&self, msg: MsgAppendEntriesReq<E>) -> MsgAppendEntriesRes {
+        let mut node_state = self.node_state.lock().await;
+
+        node_state.term = node_state.term.max(msg.term);
+
+        MsgAppendEntriesRes {
+            term: node_state.term,
+            success: true,
         }
     }
 }
@@ -503,6 +521,53 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_update_term_to_highest_term() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let node_state = { node.node_state.lock().await.clone() };
+        let last_storage_state = node.storage.last_state().await.unwrap();
+        let new_term = node_state.term + 1;
+
+        let msg_reqs = [
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: last_storage_state.clone(),
+            },
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: StorageState {
+                    term: last_storage_state.term + 1,
+                    ..last_storage_state
+                },
+            },
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: StorageState {
+                    index: last_storage_state.index + 1,
+                    ..last_storage_state
+                },
+            },
+        ];
+        let mut msg_reqs = msg_reqs.into_iter();
+
+        while let Some(msg_req) = msg_reqs.next() {
+            let msg_res = node.handle_append_entries(msg_req).await;
+            assert_eq!(msg_res.term, new_term);
+
+            let new_node_state = { node.node_state.lock().await.clone() };
+            assert_eq!(new_node_state.term, new_term)
         }
     }
 }
