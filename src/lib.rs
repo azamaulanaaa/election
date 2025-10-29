@@ -100,6 +100,9 @@ where
     async fn handle_append_entries(&self, msg: MsgAppendEntriesReq<E>) -> MsgAppendEntriesRes {
         let mut node_state = self.node_state.lock().await;
 
+        if node_state.term < msg.term {
+            node_state.kind = NodeKind::Follower;
+        }
         node_state.term = node_state.term.max(msg.term);
 
         MsgAppendEntriesRes {
@@ -568,6 +571,56 @@ mod tests {
 
             let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.term, new_term)
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_always_step_down_for_higher_term() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let mut node_state = { node.node_state.lock().await.clone() };
+        node_state = NodeState {
+            kind: NodeKind::Leader,
+            ..node_state
+        };
+
+        let last_storage_state = node.storage.last_state().await.unwrap();
+        let new_term = node_state.term + 1;
+
+        let msg_reqs = [
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: last_storage_state.clone(),
+            },
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: StorageState {
+                    term: last_storage_state.term + 1,
+                    ..last_storage_state
+                },
+            },
+            MsgAppendEntriesReq {
+                term: new_term,
+                entries: Vec::new(),
+                commited_index: 0,
+                prev_storage_state: StorageState {
+                    index: last_storage_state.index + 1,
+                    ..last_storage_state
+                },
+            },
+        ];
+        let mut msg_reqs = msg_reqs.into_iter();
+
+        while let Some(msg_req) = msg_reqs.next() {
+            let _msg_res = node.handle_append_entries(msg_req).await;
+            let new_node_state = { node.node_state.lock().await.clone() };
+            assert_eq!(new_node_state.kind, NodeKind::Follower)
         }
     }
 }
