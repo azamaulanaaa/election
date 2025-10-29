@@ -8,6 +8,8 @@ use futures::{
     lock::Mutex,
 };
 
+use crate::storage::StorageState;
+
 pub struct Message {
     node_id: usize,
     body: MessageBody,
@@ -21,28 +23,13 @@ pub enum MessageBody {
 pub struct MsgRequestVoteReq {
     pub term: u64,
     pub candidate_id: u64,
-    pub last_log_state: LogState,
+    pub last_storage_state: StorageState,
 }
 
 #[derive(Clone, Copy)]
 pub struct MsgRequestVoteRes {
     pub term: u64,
     pub granted: bool,
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd)]
-pub struct LogState {
-    pub term: u64,
-    pub index: u64,
-}
-
-impl Ord for LogState {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match Ord::cmp(&self.term, &other.term) {
-            Ordering::Equal => Ord::cmp(&self.index, &other.index),
-            other => other,
-        }
-    }
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
@@ -62,7 +49,7 @@ pub struct NodeState {
 pub struct Node {
     id: usize,
     rx: Mutex<mpsc::Receiver<Message>>,
-    log_state: Mutex<LogState>,
+    storage_state: Mutex<StorageState>,
     node_state: Mutex<NodeState>,
 }
 
@@ -72,7 +59,7 @@ impl Node {
             id,
             rx: Mutex::new(rx),
             node_state: Default::default(),
-            log_state: Default::default(),
+            storage_state: Default::default(),
         }
     }
 
@@ -91,7 +78,7 @@ impl Node {
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
         let mut node_state = self.node_state.lock().await;
-        let log_state = self.log_state.lock().await;
+        let storage_state = self.storage_state.lock().await;
 
         let granted = match Ord::cmp(&msg.term, &node_state.term) {
             Ordering::Greater => true,
@@ -100,7 +87,7 @@ impl Node {
                 .vote_for
                 .is_none_or(|vote_for| vote_for == msg.candidate_id),
         };
-        let granted = granted && msg.last_log_state >= *log_state;
+        let granted = granted && msg.last_storage_state >= *storage_state;
         if granted {
             node_state.vote_for = Some(msg.candidate_id);
         }
@@ -150,29 +137,29 @@ mod tests {
         let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let node_last_log = { node.log_state.lock().await.clone() };
+        let node_last_storage_state = { node.storage_state.lock().await.clone() };
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_log_state: node_last_log.clone(),
+                last_storage_state: node_last_storage_state.clone(),
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    term: node_last_log.term + 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    term: node_last_storage_state.term + 1,
+                    ..node_last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    index: node_last_log.index + 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    index: node_last_storage_state.index + 1,
+                    ..node_last_storage_state
                 },
             },
         ];
@@ -188,51 +175,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_request_vote_reject_if_last_log_state_is_behind() {
+    async fn handle_request_vote_reject_if_last_storage_state_is_behind() {
         let (_tx_req, rx_req) = mpsc::channel(1);
         let node = Node::new(1, rx_req);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let node_last_log = {
-            let mut node_last_log = node.log_state.lock().await;
-            *node_last_log = LogState {
+        let node_last_storage_state = {
+            let mut node_last_storage_state = node.storage_state.lock().await;
+            *node_last_storage_state = StorageState {
                 term: 23,
                 index: 3289,
             };
-            node_last_log.clone()
+            node_last_storage_state.clone()
         };
 
         let msg_reqs = [
             MsgRequestVoteReq {
                 term: node_state.term,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    term: node_last_log.term - 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    term: node_last_storage_state.term - 1,
+                    ..node_last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: node_state.term,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    index: node_last_log.index - 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    index: node_last_storage_state.index - 1,
+                    ..node_last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: node_state.term + 1,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    term: node_last_log.term - 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    term: node_last_storage_state.term - 1,
+                    ..node_last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: node_state.term + 1,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    index: node_last_log.index - 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    index: node_last_storage_state.index - 1,
+                    ..node_last_storage_state
                 },
             },
         ];
@@ -258,29 +245,29 @@ mod tests {
             ..node_state
         };
 
-        let node_last_log = { node.log_state.lock().await.clone() };
+        let node_last_storage_state = { node.storage_state.lock().await.clone() };
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_log_state: node_last_log.clone(),
+                last_storage_state: node_last_storage_state.clone(),
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    term: node_last_log.term + 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    term: node_last_storage_state.term + 1,
+                    ..node_last_storage_state
                 },
             },
             MsgRequestVoteReq {
                 term: new_term,
                 candidate_id: 32,
-                last_log_state: LogState {
-                    index: node_last_log.index + 1,
-                    ..node_last_log
+                last_storage_state: StorageState {
+                    index: node_last_storage_state.index + 1,
+                    ..node_last_storage_state
                 },
             },
         ];
@@ -335,7 +322,7 @@ mod tests {
                 .handle_request_vote(MsgRequestVoteReq {
                     term: new_term,
                     candidate_id: new_candidate,
-                    last_log_state: { node.log_state.lock().await.clone() },
+                    last_storage_state: { node.storage_state.lock().await.clone() },
                 })
                 .await;
             assert!(
@@ -398,7 +385,7 @@ mod tests {
                 .handle_request_vote(MsgRequestVoteReq {
                     term: new_term,
                     candidate_id: new_candidate,
-                    last_log_state: { node.log_state.lock().await.clone() },
+                    last_storage_state: { node.storage_state.lock().await.clone() },
                 })
                 .await;
             assert!(
@@ -454,12 +441,12 @@ mod tests {
                 MsgRequestVoteReq {
                     term: init_node_state.term,
                     candidate_id: init_node_state.vote_for.unwrap_or(1),
-                    last_log_state: { node.log_state.lock().await.clone() },
+                    last_storage_state: { node.storage_state.lock().await.clone() },
                 },
                 MsgRequestVoteReq {
                     term: init_node_state.term,
                     candidate_id: init_node_state.vote_for.map_or(1, |vote_for| vote_for + 1),
-                    last_log_state: { node.log_state.lock().await.clone() },
+                    last_storage_state: { node.storage_state.lock().await.clone() },
                 },
             ];
             let mut msg_reqs = msg_reqs.into_iter();
