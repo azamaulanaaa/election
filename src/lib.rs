@@ -10,7 +10,7 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
-    storage::Storage,
+    storage::{Storage, StorageValue},
 };
 
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
@@ -116,6 +116,30 @@ where
 
         let storage_state = self.storage.get_state(msg.prev_storage_state.index).await;
         let success = success && storage_state.is_ok_and(|v| v == msg.prev_storage_state);
+
+        if success {
+            let mut entries = msg.entries.into_iter().enumerate();
+            let mut truncated = false;
+            while let Some((offset, entry)) = entries.next() {
+                let current_index = (offset + 1) as u64 + msg.prev_storage_state.index;
+                let value = StorageValue {
+                    term: node_state.term,
+                    entry,
+                };
+
+                let stored_entry = self.storage.get(current_index).await;
+                if stored_entry.is_ok_and(|e| e == value) {
+                    continue;
+                }
+
+                if !truncated {
+                    self.storage.truncate(current_index).await.unwrap();
+                    truncated = true;
+                }
+
+                self.storage.push(value).await.unwrap();
+            }
+        }
 
         MsgAppendEntriesRes {
             term: node_state.term,
@@ -815,5 +839,96 @@ mod tests {
                 "Last storage state must not change due to lower term"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_match_storage_state_no_truncate() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            node_state.term = 2;
+            node_state.clone()
+        };
+
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+
+        let entry = 1;
+
+        let msg_req = MsgAppendEntriesReq {
+            term: node_state.term,
+            commited_index: node_state.commited_index,
+            entries: vec![entry],
+            prev_storage_state: last_storage_state,
+        };
+        let msg_res = node.handle_append_entries(1, msg_req).await;
+        assert!(msg_res.success, "Message response's success must be true");
+
+        let new_last_index = node.storage.last_index().await.unwrap();
+
+        let new_entry = node.storage.get(new_last_index).await.unwrap().entry;
+        assert!(new_entry == entry, "Entry must be stored to the storage");
+
+        let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
+        assert_eq!(
+            new_last_stroage_state,
+            StorageState {
+                term: node_state.term,
+                index: last_storage_state.index + 1,
+            },
+            "Last storage state must updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_match_storage_state_with_truncate() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            node_state.term = 2;
+            node_state.clone()
+        };
+        node.storage
+            .push(StorageValue {
+                term: node_state.term,
+                entry: 0,
+            })
+            .await
+            .unwrap();
+
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+
+        let entry = 1;
+
+        let msg_req = MsgAppendEntriesReq {
+            term: node_state.term,
+            commited_index: node_state.commited_index,
+            entries: vec![entry],
+            prev_storage_state: StorageState::default(),
+        };
+        let msg_res = node.handle_append_entries(1, msg_req).await;
+        assert!(msg_res.success, "Message response's success must be true");
+
+        let new_last_index = node.storage.last_index().await.unwrap();
+
+        let new_entry = node.storage.get(new_last_index).await.unwrap().entry;
+        assert!(new_entry == entry, "Entry must be stored to the storage");
+
+        let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
+        assert_eq!(
+            new_last_stroage_state,
+            StorageState {
+                term: node_state.term,
+                index: last_storage_state.index,
+            },
+            "Last storage state must updated"
+        );
     }
 }
