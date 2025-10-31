@@ -20,7 +20,7 @@ pub enum NodeKind {
     Follower,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct NodeState {
     pub vote_for: Option<u64>,
     pub term: u64,
@@ -112,9 +112,11 @@ where
         }
         node_state.term = node_state.term.max(msg.term);
 
+        let success = node_state.term == msg.term;
+
         MsgAppendEntriesRes {
             term: node_state.term,
-            success: true,
+            success,
         }
     }
 }
@@ -691,5 +693,56 @@ mod tests {
             let new_node_state = { node.node_state.lock().await.clone() };
             assert_eq!(new_node_state.leader_id, new_leader_id)
         }
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_reject_on_lower_term() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let term = 2;
+        node.storage
+            .push(StorageValue { term, entry: 0 })
+            .await
+            .unwrap();
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            node_state.term = term;
+            node_state.clone()
+        };
+
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+
+        let msg_req = MsgAppendEntriesReq {
+            term: node_state.term - 1,
+            entries: vec![1],
+            commited_index: node_state.commited_index,
+            prev_storage_state: last_storage_state.clone(),
+        };
+
+        let msg_res = node.handle_append_entries(1, msg_req).await;
+        assert!(
+            !msg_res.success,
+            "Message response's success must be false when the term is lower"
+        );
+        assert_eq!(
+            msg_res.term, node_state.term,
+            "Message response's term must be equal to node state's term",
+        );
+
+        let new_node_state = { node.node_state.lock().await.clone() };
+        assert_eq!(
+            new_node_state, node_state,
+            "Node state must not change due to lower term",
+        );
+
+        let new_last_index = node.storage.last_index().await.unwrap();
+        let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
+        assert_eq!(
+            new_last_stroage_state, last_storage_state,
+            "Last storage state must not change due to lower term"
+        );
     }
 }

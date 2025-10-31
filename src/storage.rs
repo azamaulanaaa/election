@@ -98,7 +98,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Debug)]
 pub struct StorageState {
     pub term: u64,
     pub index: u64,
