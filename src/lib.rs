@@ -114,6 +114,9 @@ where
 
         let success = node_state.term == msg.term;
 
+        let storage_state = self.storage.get_state(msg.prev_storage_state.index).await;
+        let success = success && storage_state.is_ok_and(|v| v == msg.prev_storage_state);
+
         MsgAppendEntriesRes {
             term: node_state.term,
             success,
@@ -744,5 +747,73 @@ mod tests {
             new_last_stroage_state, last_storage_state,
             "Last storage state must not change due to lower term"
         );
+    }
+
+    #[tokio::test]
+    async fn handle_append_entries_reject_on_no_match_storage_state() {
+        let (_tx, rx) = mpsc::channel(1);
+        let mem_storage = MemStorage::<usize>::default();
+        let node = Node::new(1, rx, mem_storage);
+
+        let node_state = {
+            let mut node_state = node.node_state.lock().await;
+            node_state.term = 2;
+            node_state.clone()
+        };
+        node.storage
+            .push(StorageValue {
+                term: node_state.term,
+                entry: 2,
+            })
+            .await
+            .unwrap();
+
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+
+        let storage_states = [
+            StorageState {
+                index: last_storage_state.index - 1,
+                ..last_storage_state
+            },
+            StorageState {
+                index: last_storage_state.index + 1,
+                ..last_storage_state
+            },
+            StorageState {
+                term: last_storage_state.term - 1,
+                ..last_storage_state
+            },
+            StorageState {
+                term: last_storage_state.term + 1,
+                ..last_storage_state
+            },
+        ];
+        let mut storage_states = storage_states.into_iter();
+
+        while let Some(storage_state) = storage_states.next() {
+            let msg_res = node
+                .handle_append_entries(
+                    1,
+                    MsgAppendEntriesReq {
+                        term: node_state.term,
+                        commited_index: node_state.commited_index,
+                        entries: vec![1],
+                        prev_storage_state: storage_state,
+                    },
+                )
+                .await;
+            assert!(
+                !msg_res.success,
+                "Message response's success must be false if no previous storage state match found"
+            );
+
+            let new_last_index = node.storage.last_index().await.unwrap();
+            let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
+            assert_eq!(
+                new_last_stroage_state, last_storage_state,
+                "Last storage state must not change due to lower term"
+            );
+        }
     }
 }
