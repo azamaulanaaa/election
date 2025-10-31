@@ -13,7 +13,7 @@ pub enum StorageError {
 #[derive(Clone)]
 pub struct StorageValue<E>
 where
-    E: Clone,
+    E: Clone + Send + Sync,
 {
     pub term: u64,
     pub entry: E,
