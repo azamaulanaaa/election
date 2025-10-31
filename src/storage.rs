@@ -29,8 +29,7 @@ where
     async fn truncate(&self, index: u64) -> Result<(), StorageError>;
     async fn last_index(&self) -> Result<u64, StorageError>;
 
-    async fn last_state(&self) -> Result<StorageState, StorageError> {
-        let index = self.last_index().await?;
+    async fn get_state(&self, index: u64) -> Result<StorageState, StorageError> {
         if index == 0 {
             return Ok(StorageState::default());
         }

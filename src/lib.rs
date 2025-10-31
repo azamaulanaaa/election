@@ -73,7 +73,8 @@ where
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
         let mut node_state = self.node_state.lock().await;
-        let last_storage_state = self.storage.last_state().await.unwrap();
+        let last_index = self.storage.last_index().await.unwrap();
+        let last_storage_state = self.storage.get_state(last_index).await.unwrap();
 
         let granted = match Ord::cmp(&msg.term, &node_state.term) {
             Ordering::Greater => true,
@@ -155,7 +156,8 @@ mod tests {
         let node = Node::new(1, rx_req, mem_storage);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
@@ -211,7 +213,8 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            let last_storage_state = node.storage.last_state().await.unwrap();
+            let last_index = node.storage.last_index().await.unwrap();
+            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
             last_storage_state
         };
 
@@ -275,7 +278,8 @@ mod tests {
             node_state.clone()
         };
 
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
@@ -341,7 +345,8 @@ mod tests {
         ];
         let mut init_node_states = init_node_states.into_iter();
 
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
 
         while let Some(init_node_state) = init_node_states.next() {
             {
@@ -407,7 +412,8 @@ mod tests {
         ];
         let mut init_node_states = init_node_states.into_iter();
 
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
 
         while let Some(init_node_state) = init_node_states.next() {
             {
@@ -468,7 +474,8 @@ mod tests {
         ];
         let mut node_states = node_states.into_iter();
 
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
 
         while let Some(init_node_state) = node_states.next() {
             {
@@ -543,7 +550,8 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = { node.node_state.lock().await.clone() };
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
@@ -598,7 +606,8 @@ mod tests {
             node_state.clone()
         };
 
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
 
         let msg_reqs = [
@@ -644,7 +653,8 @@ mod tests {
 
         let node_state = { node.node_state.lock().await.clone() };
 
-        let last_storage_state = node.storage.last_state().await.unwrap();
+        let last_index = node.storage.last_index().await.unwrap();
+        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
         let new_leader_id = node_state.leader_id + 1;
 
