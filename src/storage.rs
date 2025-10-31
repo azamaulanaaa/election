@@ -81,14 +81,10 @@ where
         if index == 0 {
             return Err(StorageError::NonPositif);
         }
-        let inner_index = index - 1;
-        let size = self.last_index().await?;
 
-        if index > size + 1 {
-            return Err(StorageError::OutOfBound { index, size });
-        }
+        let new_len = index - 1;
 
-        self.vector.write().await.truncate(inner_index as usize);
+        self.vector.write().await.truncate(new_len as usize);
 
         Ok(())
     }
