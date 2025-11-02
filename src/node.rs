@@ -458,103 +458,119 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        async fn equal_term() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod equal_term {
+            use super::*;
 
-            let node_state = { node.state.lock().await.clone() };
-            let node_states = [
-                NodeState {
-                    vote_for: None,
-                    leader_id: Some(node.id + 1),
-                    ..node_state
-                },
-                NodeState {
-                    vote_for: None,
-                    leader_id: Some(node.id),
-                    ..node_state
-                },
-                NodeState {
-                    vote_for: Some(1),
-                    leader_id: Some(node.id + 1),
-                    ..node_state
-                },
-                NodeState {
-                    vote_for: Some(1),
-                    leader_id: Some(node.id),
-                    ..node_state
-                },
-            ];
-            let mut node_states = node_states.into_iter();
+            #[tokio::test]
+            async fn grant_for_empty_vote_for() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-
-            while let Some(init_node_state) = node_states.next() {
                 {
                     let mut node_state = node.state.lock().await;
-                    *node_state = init_node_state;
-                }
+                    node_state.vote_for = None;
+                    node_state.term = node_state.term + 1;
+                };
 
-                let msg_reqs = [
-                    MsgRequestVoteReq {
-                        term: init_node_state.term,
-                        candidate_id: init_node_state.vote_for.unwrap_or(1),
-                        last_storage_state,
-                    },
-                    MsgRequestVoteReq {
-                        term: init_node_state.term,
-                        candidate_id: init_node_state.vote_for.map_or(1, |vote_for| vote_for + 1),
-                        last_storage_state,
-                    },
-                ];
-                let mut msg_reqs = msg_reqs.into_iter();
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
 
-                while let Some(msg_req) = msg_reqs.next() {
-                    let msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term },
+                    candidate_id: node.id + 1,
+                    last_storage_state,
+                };
+                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
 
-                    match init_node_state.vote_for {
-                        Some(candidate) => {
-                            if candidate == msg_req.candidate_id {
-                                assert!(
-                                    msg_res.granted,
-                                    "RequestVote must granted vote when voting for same candidate"
-                                );
-                                let node_state = { node.state.lock().await };
-                                assert_eq!(
-                                    node_state.vote_for, init_node_state.vote_for,
-                                    "Node should not change vote for when voting for same candidate"
-                                );
-                            } else {
-                                assert!(
-                                    !msg_res.granted,
-                                    "RequestVote must not grant vote when not voting for different candidate"
-                                );
+                assert_eq!(msg_res.granted, true);
+            }
 
-                                let node_state = { node.state.lock().await };
-                                assert_eq!(
-                                    node_state.vote_for, init_node_state.vote_for,
-                                    "Node should not change vote for when not voting for diffent candidate"
-                                );
-                            }
-                        }
-                        None => {
-                            assert!(
-                                msg_res.granted,
-                                "RequestVote must granted vote when not voting for any candidate"
-                            );
+            #[tokio::test]
+            async fn grant_for_voting_same_candidate() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-                            let node_state = { node.state.lock().await };
-                            assert_eq!(
-                                node_state.vote_for,
-                                Some(msg_req.candidate_id),
-                                "Node should vote for given candidate when not voting for any candidate"
-                            );
-                        }
-                    }
-                }
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.vote_for = Some(node.id + 1);
+                    node_state.term = node_state.term + 1;
+                };
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term },
+                    candidate_id: { node.state.lock().await.vote_for.unwrap() },
+                    last_storage_state,
+                };
+                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+                assert_eq!(msg_res.granted, true);
+            }
+
+            #[tokio::test]
+            async fn no_grant_for_voting_different_candidate() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
+
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.vote_for = Some(node.id + 1);
+                    node_state.term = node_state.term + 1;
+                };
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term },
+                    candidate_id: { node.state.lock().await.vote_for.unwrap() } + 1,
+                    last_storage_state,
+                };
+                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+                assert_eq!(msg_res.granted, false);
+            }
+
+            #[tokio::test]
+            async fn update_vote_for_if_empty_vote_for() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
+
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.vote_for = None;
+                    node_state.term = node_state.term + 1;
+                };
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term },
+                    candidate_id: node.id + 1,
+                    last_storage_state,
+                };
+                let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+                assert_eq!(node.state.lock().await.vote_for, Some(msg_req.candidate_id));
             }
         }
     }
