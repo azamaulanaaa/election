@@ -23,7 +23,7 @@ pub struct NodeState {
     pub term: u64,
     pub kind: NodeKind,
     pub commited_index: u64,
-    pub leader_id: u64,
+    pub leader_id: Option<u64>,
 }
 
 pub struct Node<S, E>
@@ -105,7 +105,7 @@ where
 
         if node_state.term < msg.term {
             node_state.kind = NodeKind::Follower;
-            node_state.leader_id = from;
+            node_state.leader_id = Some(from);
         }
         node_state.term = node_state.term.max(msg.term);
 
@@ -684,7 +684,7 @@ mod tests {
         let last_index = node.storage.last_index().await.unwrap();
         let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
-        let new_leader_id = node_state.leader_id + 1;
+        let new_leader_id = 1;
 
         let msg_reqs = [
             MsgAppendEntriesReq {
@@ -717,7 +717,7 @@ mod tests {
         while let Some(msg_req) = msg_reqs.next() {
             let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
             let new_node_state = { node.state.lock().await.clone() };
-            assert_eq!(new_node_state.leader_id, new_leader_id)
+            assert_eq!(new_node_state.leader_id, Some(new_leader_id))
         }
     }
 
