@@ -233,72 +233,85 @@ mod tests {
             assert_eq!(node.state.lock().await.term, msg_req.term);
         }
 
-        #[tokio::test]
-        async fn reject_if_last_storage_state_is_behind() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod reject_if_last_storage_state_is_behind {
+            use super::*;
 
-            let node_state = {
-                let mut node_state = node.state.lock().await;
-                node_state.term = node_state.term + 1;
-                node_state.clone()
-            };
-            let last_storage_state = {
-                node.storage
-                    .push(StorageValue {
-                        term: node_state.term,
-                        entry: 0,
-                    })
-                    .await
-                    .unwrap();
-                let last_index = node.storage.last_index().await.unwrap();
-                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-                last_storage_state
-            };
+            #[tokio::test]
+            async fn term_is_older() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let msg_reqs = [
-                MsgRequestVoteReq {
-                    term: node_state.term,
-                    candidate_id: 32,
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.term = 4;
+                }
+                {
+                    node.storage
+                        .push(StorageValue {
+                            term: { node.state.lock().await.term },
+                            entry: 0,
+                        })
+                        .await
+                        .unwrap();
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term },
+                    candidate_id: node.id + 1,
                     last_storage_state: StorageState {
                         term: last_storage_state.term - 1,
                         ..last_storage_state
                     },
-                },
-                MsgRequestVoteReq {
-                    term: node_state.term,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        index: last_storage_state.index - 1,
-                        ..last_storage_state
-                    },
-                },
-                MsgRequestVoteReq {
-                    term: node_state.term + 1,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        term: last_storage_state.term - 1,
-                        ..last_storage_state
-                    },
-                },
-                MsgRequestVoteReq {
-                    term: node_state.term + 1,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        index: last_storage_state.index - 1,
-                        ..last_storage_state
-                    },
-                },
-            ];
-            let mut msg_reqs = msg_reqs.into_iter();
-
-            while let Some(msg_req) = msg_reqs.next() {
+                };
                 let msg_res = node.handle_request_vote(msg_req).await.unwrap();
                 assert_eq!(msg_res.granted, false);
+            }
 
-                let new_node_state = { node.state.lock().await.clone() };
-                assert_eq!(new_node_state.vote_for, node_state.vote_for)
+            #[tokio::test]
+            async fn index_is_older() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
+
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.term = 4;
+                }
+                {
+                    for _ in 0..=2 {
+                        node.storage
+                            .push(StorageValue {
+                                term: { node.state.lock().await.term },
+                                entry: 0,
+                            })
+                            .await
+                            .unwrap();
+                    }
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term },
+                    candidate_id: node.id + 1,
+                    last_storage_state: StorageState {
+                        index: last_storage_state.index - 1,
+                        ..last_storage_state
+                    },
+                };
+                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                assert_eq!(msg_res.granted, false);
             }
         }
 
