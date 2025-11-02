@@ -163,7 +163,7 @@ mod tests {
     use futures::channel::mpsc;
     use tokio::time;
 
-    use crate::storage::{MemStorage, StorageState, StorageValue};
+    use crate::storage::MemStorage;
 
     use super::*;
 
