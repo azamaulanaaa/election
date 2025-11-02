@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt::Debug};
 
 use async_lock::RwLock;
 
@@ -10,10 +10,10 @@ pub enum StorageError {
     NonPositif,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct StorageValue<E>
 where
-    E: Clone + Send + Sync + PartialEq,
+    E: Clone + Send + Sync + PartialEq + Debug,
 {
     pub term: u64,
     pub entry: E,
@@ -22,7 +22,7 @@ where
 #[async_trait::async_trait]
 pub trait Storage<E>: Sync
 where
-    E: Clone + Send + Sync + PartialEq,
+    E: Clone + Send + Sync + PartialEq + Debug,
 {
     async fn push(&self, value: StorageValue<E>) -> Result<(), StorageError>;
     async fn get(&self, index: u64) -> Result<StorageValue<E>, StorageError>;
@@ -46,7 +46,7 @@ where
 #[derive(Default)]
 pub struct MemStorage<E>
 where
-    E: Clone + Send + Sync + PartialEq,
+    E: Clone + Send + Sync + PartialEq + Debug,
 {
     vector: RwLock<Vec<StorageValue<E>>>,
 }
@@ -54,7 +54,7 @@ where
 #[async_trait::async_trait]
 impl<E> Storage<E> for MemStorage<E>
 where
-    E: Clone + Send + Sync + PartialEq,
+    E: Clone + Send + Sync + PartialEq + Debug,
 {
     async fn push(&self, value: StorageValue<E>) -> Result<(), StorageError> {
         self.vector.write().await.push(value);

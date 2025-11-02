@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt::Debug};
 
 use futures::{StreamExt, channel::mpsc, lock::Mutex};
 
@@ -27,7 +27,7 @@ pub struct NodeState {
 pub struct Node<S, E>
 where
     S: Storage<E>,
-    E: Clone + Send + Sync + PartialEq,
+    E: Clone + Send + Sync + PartialEq + Debug,
 {
     id: u64,
     rx: Mutex<mpsc::Receiver<Message<E>>>,
@@ -38,7 +38,7 @@ where
 impl<S, E> Node<S, E>
 where
     S: Storage<E>,
-    E: Clone + Send + Sync + PartialEq,
+    E: Clone + Send + Sync + PartialEq + Debug,
 {
     pub fn new(id: u64, rx: mpsc::Receiver<Message<E>>, storage: S) -> Self {
         Self {
