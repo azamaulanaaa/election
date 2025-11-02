@@ -588,46 +588,50 @@ mod tests {
             let mem_storage = MemStorage::<usize>::default();
             let node = Node::new(1, rx, mem_storage);
 
-            let node_state = { node.state.lock().await.clone() };
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-            let new_term = node_state.term + 1;
+            let last_storage_state = {
+                let last_index = node.storage.last_index().await.unwrap();
+                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                last_storage_state
+            };
 
-            let msg_reqs = [
-                MsgAppendEntriesReq {
-                    term: new_term,
-                    entries: Vec::new(),
-                    commited_index: 0,
-                    prev_storage_state: last_storage_state.clone(),
-                },
-                MsgAppendEntriesReq {
-                    term: new_term,
-                    entries: Vec::new(),
-                    commited_index: 0,
-                    prev_storage_state: StorageState {
-                        term: last_storage_state.term + 1,
-                        ..last_storage_state
-                    },
-                },
-                MsgAppendEntriesReq {
-                    term: new_term,
-                    entries: Vec::new(),
-                    commited_index: 0,
-                    prev_storage_state: StorageState {
-                        index: last_storage_state.index + 1,
-                        ..last_storage_state
-                    },
-                },
-            ];
-            let mut msg_reqs = msg_reqs.into_iter();
+            let msg_req = MsgAppendEntriesReq {
+                term: { node.state.lock().await.term } + 1,
+                prev_storage_state: last_storage_state,
+                commited_index: { node.state.lock().await.commited_index },
+                entries: Vec::new(),
+            };
+            let _msg_res = node
+                .handle_append_entries(node.id + 1, msg_req.clone())
+                .await
+                .unwrap();
 
-            while let Some(msg_req) = msg_reqs.next() {
-                let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
-                assert_eq!(msg_res.term, new_term);
+            assert_eq!(node.state.lock().await.term, msg_req.term);
+        }
 
-                let new_node_state = { node.state.lock().await.clone() };
-                assert_eq!(new_node_state.term, new_term)
-            }
+        #[tokio::test]
+        async fn response_with_state_term() {
+            let (_tx, rx) = mpsc::channel(1);
+            let mem_storage = MemStorage::<usize>::default();
+            let node = Node::new(1, rx, mem_storage);
+
+            let last_storage_state = {
+                let last_index = node.storage.last_index().await.unwrap();
+                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                last_storage_state
+            };
+
+            let msg_req = MsgAppendEntriesReq {
+                term: { node.state.lock().await.term },
+                prev_storage_state: last_storage_state,
+                commited_index: { node.state.lock().await.commited_index },
+                entries: Vec::new(),
+            };
+            let msg_res = node
+                .handle_append_entries(node.id + 1, msg_req.clone())
+                .await
+                .unwrap();
+
+            assert_eq!(msg_res.term, node.state.lock().await.term);
         }
 
         #[tokio::test]
