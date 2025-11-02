@@ -7,8 +7,14 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
-    storage::{Storage, StorageValue},
+    storage::{Storage, StorageError, StorageValue},
 };
+
+#[derive(thiserror::Error, Debug)]
+pub enum NodeError {
+    #[error("{0}")]
+    Storage(#[from] StorageError),
+}
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct NodeState {
@@ -49,11 +55,14 @@ where
         while let Some(message) = rx_guard.next().await {
             match message.body {
                 MessageBody::RequestVote(msg_req, tx_res) => {
-                    let msg_res = self.handle_request_vote(msg_req).await;
+                    let msg_res = self.handle_request_vote(msg_req).await.unwrap();
                     let _ = tx_res.send(msg_res);
                 }
                 MessageBody::AppendEntries(msg_req, tx_res) => {
-                    let msg_res = self.handle_append_entries(message.node_id, msg_req).await;
+                    let msg_res = self
+                        .handle_append_entries(message.node_id, msg_req)
+                        .await
+                        .unwrap();
                     let _ = tx_res.send(msg_res);
                 }
             };
@@ -68,10 +77,13 @@ where
             .is_some_and(|id| id == self.id)
     }
 
-    async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
+    async fn handle_request_vote(
+        &self,
+        msg: MsgRequestVoteReq,
+    ) -> Result<MsgRequestVoteRes, NodeError> {
         let mut node_state = self.state.lock().await;
         let last_index = self.storage.last_index().await.unwrap();
-        let last_storage_state = self.storage.get_state(last_index).await.unwrap();
+        let last_storage_state = self.storage.get_state(last_index).await?;
 
         let granted = match Ord::cmp(&msg.term, &node_state.term) {
             Ordering::Greater => true,
@@ -90,17 +102,17 @@ where
             node_state.leader_id = None;
         }
 
-        MsgRequestVoteRes {
+        Ok(MsgRequestVoteRes {
             term: node_state.term,
             granted,
-        }
+        })
     }
 
     async fn handle_append_entries(
         &self,
         from: u64,
         msg: MsgAppendEntriesReq<E>,
-    ) -> MsgAppendEntriesRes {
+    ) -> Result<MsgAppendEntriesRes, NodeError> {
         let mut node_state = self.state.lock().await;
 
         if node_state.term < msg.term {
@@ -139,10 +151,10 @@ where
             }
         }
 
-        MsgAppendEntriesRes {
+        Ok(MsgAppendEntriesRes {
             term: node_state.term,
             success,
-        }
+        })
     }
 }
 
@@ -213,7 +225,7 @@ mod tests {
         let mut msg_reqs = msg_reqs.into_iter();
 
         while let Some(msg_req) = msg_reqs.next() {
-            let msg_res = node.handle_request_vote(msg_req).await;
+            let msg_res = node.handle_request_vote(msg_req).await.unwrap();
             assert_eq!(msg_res.term, new_term);
 
             let new_node_state = { node.state.lock().await.clone() };
@@ -282,7 +294,7 @@ mod tests {
         let mut msg_reqs = msg_reqs.into_iter();
 
         while let Some(msg_req) = msg_reqs.next() {
-            let msg_res = node.handle_request_vote(msg_req).await;
+            let msg_res = node.handle_request_vote(msg_req).await.unwrap();
             assert_eq!(msg_res.granted, false);
 
             let new_node_state = { node.state.lock().await.clone() };
@@ -385,7 +397,8 @@ mod tests {
                     candidate_id: new_candidate,
                     last_storage_state,
                 })
-                .await;
+                .await
+                .unwrap();
             assert!(
                 msg_res.granted,
                 "RequestVote must granted vote for higher term"
@@ -452,7 +465,8 @@ mod tests {
                     candidate_id: new_candidate,
                     last_storage_state,
                 })
-                .await;
+                .await
+                .unwrap();
             assert!(
                 !msg_res.granted,
                 "RequestVote must not granted vote for lower term"
@@ -521,7 +535,7 @@ mod tests {
             let mut msg_reqs = msg_reqs.into_iter();
 
             while let Some(msg_req) = msg_reqs.next() {
-                let msg_res = node.handle_request_vote(msg_req.clone()).await;
+                let msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
 
                 match init_node_state.vote_for {
                     Some(candidate) => {
@@ -606,7 +620,7 @@ mod tests {
         let mut msg_reqs = msg_reqs.into_iter();
 
         while let Some(msg_req) = msg_reqs.next() {
-            let msg_res = node.handle_append_entries(1, msg_req).await;
+            let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
             assert_eq!(msg_res.term, new_term);
 
             let new_node_state = { node.state.lock().await.clone() };
@@ -742,7 +756,7 @@ mod tests {
             prev_storage_state: last_storage_state.clone(),
         };
 
-        let msg_res = node.handle_append_entries(1, msg_req).await;
+        let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
         assert!(
             !msg_res.success,
             "Message response's success must be false when the term is lower"
@@ -819,7 +833,8 @@ mod tests {
                         prev_storage_state: storage_state,
                     },
                 )
-                .await;
+                .await
+                .unwrap();
             assert!(
                 !msg_res.success,
                 "Message response's success must be false if no previous storage state match found"
@@ -857,7 +872,7 @@ mod tests {
             entries: vec![entry],
             prev_storage_state: last_storage_state,
         };
-        let msg_res = node.handle_append_entries(1, msg_req).await;
+        let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
         assert!(msg_res.success, "Message response's success must be true");
 
         let new_last_index = node.storage.last_index().await.unwrap();
@@ -906,7 +921,7 @@ mod tests {
             entries: vec![entry],
             prev_storage_state: StorageState::default(),
         };
-        let msg_res = node.handle_append_entries(1, msg_req).await;
+        let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
         assert!(msg_res.success, "Message response's success must be true");
 
         let new_last_index = node.storage.last_index().await.unwrap();
@@ -944,7 +959,7 @@ mod tests {
             entries: Vec::new(),
             prev_storage_state: StorageState::default(),
         };
-        let msg_res = node.handle_append_entries(2, msg_req).await;
+        let msg_res = node.handle_append_entries(2, msg_req).await.unwrap();
         assert!(msg_res.success, "Message response must be success");
 
         let new_node_state = { node.state.lock().await.clone() };
