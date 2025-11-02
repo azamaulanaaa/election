@@ -634,33 +634,37 @@ mod tests {
             assert_eq!(msg_res.term, node.state.lock().await.term);
         }
 
-        #[tokio::test]
-        async fn update_leader_id_with_higher_term() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod higher_term {
+            use super::*;
 
-            {
-                let mut node_state = node.state.lock().await;
-                node_state.leader_id = Some(node.id + 1);
+            #[tokio::test]
+            async fn update_leader_id() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
+
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.leader_id = Some(node.id + 1);
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let new_leader_id = { node.state.lock().await.leader_id.unwrap() } + 1;
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term } + 1,
+                    prev_storage_state: last_storage_state,
+                    entries: Vec::new(),
+                    commited_index: { node.state.lock().await.term },
+                };
+                let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
+
+                assert_eq!(node.state.lock().await.leader_id, Some(new_leader_id))
             }
-
-            let last_storage_state = {
-                let last_index = node.storage.last_index().await.unwrap();
-                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-                last_storage_state
-            };
-
-            let new_leader_id = { node.state.lock().await.leader_id.unwrap() } + 1;
-            let msg_req = MsgAppendEntriesReq {
-                term: { node.state.lock().await.term } + 1,
-                prev_storage_state: last_storage_state,
-                entries: Vec::new(),
-                commited_index: { node.state.lock().await.term },
-            };
-            let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
-
-            assert_eq!(node.state.lock().await.leader_id, Some(new_leader_id))
         }
 
         #[tokio::test]
