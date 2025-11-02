@@ -730,72 +730,150 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        async fn reject_on_no_match_storage_state() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod reject_on_no_match_storage_state {
+            use super::*;
 
-            let node_state = {
-                let mut node_state = node.state.lock().await;
-                node_state.term = 2;
-                node_state.clone()
-            };
-            node.storage
-                .push(StorageValue {
-                    term: node_state.term,
-                    entry: 2,
-                })
-                .await
-                .unwrap();
+            async fn new_node() -> Node<MemStorage<usize>, usize> {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.term = node_state.term + 1;
+                    node_state.leader_id = Some(node.id + 1);
+                }
 
-            let storage_states = [
-                StorageState {
-                    index: last_storage_state.index - 1,
-                    ..last_storage_state
-                },
-                StorageState {
-                    index: last_storage_state.index + 1,
-                    ..last_storage_state
-                },
-                StorageState {
-                    term: last_storage_state.term - 1,
-                    ..last_storage_state
-                },
-                StorageState {
-                    term: last_storage_state.term + 1,
-                    ..last_storage_state
-                },
-            ];
-            let mut storage_states = storage_states.into_iter();
+                {
+                    node.storage
+                        .push(StorageValue {
+                            term: { node.state.lock().await.term } - 1,
+                            entry: 2,
+                        })
+                        .await
+                        .unwrap();
+                    node.storage
+                        .push(StorageValue {
+                            term: { node.state.lock().await.term },
+                            entry: 0,
+                        })
+                        .await
+                        .unwrap();
+                }
 
-            while let Some(storage_state) = storage_states.next() {
+                node
+            }
+
+            #[tokio::test]
+            async fn higher_term() {
+                let node = new_node().await;
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term },
+                    commited_index: { node.state.lock().await.commited_index },
+                    entries: Vec::new(),
+                    prev_storage_state: StorageState {
+                        term: last_storage_state.term + 1,
+                        ..last_storage_state
+                    },
+                };
                 let msg_res = node
-                    .handle_append_entries(
-                        1,
-                        MsgAppendEntriesReq {
-                            term: node_state.term,
-                            commited_index: node_state.commited_index,
-                            entries: vec![1],
-                            prev_storage_state: storage_state,
-                        },
-                    )
+                    .handle_append_entries(leader_id, msg_req)
                     .await
                     .unwrap();
-                assert!(
-                    !msg_res.success,
-                    "Message response's success must be false if no previous storage state match found"
-                );
 
-                let new_last_index = node.storage.last_index().await.unwrap();
-                let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
-                assert_eq!(
-                    new_last_stroage_state, last_storage_state,
-                    "Last storage state must not change due to lower term"
-                );
+                assert_eq!(msg_res.success, false);
+            }
+
+            #[tokio::test]
+            async fn lower_term() {
+                let node = new_node().await;
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term },
+                    commited_index: { node.state.lock().await.commited_index },
+                    entries: Vec::new(),
+                    prev_storage_state: StorageState {
+                        term: last_storage_state.term - 1,
+                        ..last_storage_state
+                    },
+                };
+                let msg_res = node
+                    .handle_append_entries(leader_id, msg_req)
+                    .await
+                    .unwrap();
+
+                assert_eq!(msg_res.success, false);
+            }
+
+            #[tokio::test]
+            async fn higher_index() {
+                let node = new_node().await;
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term },
+                    commited_index: { node.state.lock().await.commited_index },
+                    entries: Vec::new(),
+                    prev_storage_state: StorageState {
+                        index: last_storage_state.index + 1,
+                        ..last_storage_state
+                    },
+                };
+                let msg_res = node
+                    .handle_append_entries(leader_id, msg_req)
+                    .await
+                    .unwrap();
+
+                assert_eq!(msg_res.success, false);
+            }
+
+            #[tokio::test]
+            async fn lower_index() {
+                let node = new_node().await;
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term },
+                    commited_index: { node.state.lock().await.commited_index },
+                    entries: Vec::new(),
+                    prev_storage_state: StorageState {
+                        index: last_storage_state.index - 1,
+                        ..last_storage_state
+                    },
+                };
+                let msg_res = node
+                    .handle_append_entries(leader_id, msg_req)
+                    .await
+                    .unwrap();
+
+                assert_eq!(msg_res.success, false);
             }
         }
 
