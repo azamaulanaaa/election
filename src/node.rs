@@ -10,18 +10,10 @@ use crate::{
     storage::{Storage, StorageValue},
 };
 
-#[derive(Default, Clone, Copy, Debug, PartialEq)]
-pub enum NodeKind {
-    #[default]
-    Leader,
-    Follower,
-}
-
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct NodeState {
     pub vote_for: Option<u64>,
     pub term: u64,
-    pub kind: NodeKind,
     pub commited_index: u64,
     pub leader_id: Option<u64>,
 }
@@ -68,6 +60,14 @@ where
         }
     }
 
+    pub async fn is_leader(&self) -> bool {
+        self.state
+            .lock()
+            .await
+            .leader_id
+            .is_some_and(|id| id == self.id)
+    }
+
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
         let mut node_state = self.state.lock().await;
         let last_index = self.storage.last_index().await.unwrap();
@@ -87,7 +87,7 @@ where
 
         if node_state.term < msg.term {
             node_state.term = msg.term;
-            node_state.kind = NodeKind::Follower;
+            node_state.leader_id = None;
         }
 
         MsgRequestVoteRes {
@@ -104,7 +104,6 @@ where
         let mut node_state = self.state.lock().await;
 
         if node_state.term < msg.term {
-            node_state.kind = NodeKind::Follower;
             node_state.leader_id = Some(from);
         }
         node_state.term = node_state.term.max(msg.term);
@@ -299,10 +298,7 @@ mod tests {
 
         let node_state = {
             let mut node_state = node.state.lock().await;
-            *node_state = NodeState {
-                kind: NodeKind::Leader,
-                ..*node_state
-            };
+            node_state.leader_id = Some(1);
             node_state.clone()
         };
 
@@ -337,8 +333,7 @@ mod tests {
 
         while let Some(msg_req) = msg_reqs.next() {
             let _msg_res = node.handle_request_vote(msg_req).await;
-            let new_node_state = { node.state.lock().await.clone() };
-            assert_eq!(new_node_state.kind, NodeKind::Follower)
+            assert_eq!(node.is_leader().await, false)
         }
     }
 
@@ -352,22 +347,22 @@ mod tests {
         let init_node_states = [
             NodeState {
                 vote_for: None,
-                kind: NodeKind::Follower,
+                leader_id: Some(node.id + 1),
                 ..node_state
             },
             NodeState {
                 vote_for: None,
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..node_state
             },
             NodeState {
                 vote_for: Some(1),
-                kind: NodeKind::Follower,
+                leader_id: Some(node.id + 1),
                 ..node_state
             },
             NodeState {
                 vote_for: Some(1),
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..node_state
             },
         ];
@@ -416,25 +411,25 @@ mod tests {
             NodeState {
                 term: 10,
                 vote_for: None,
-                kind: NodeKind::Follower,
+                leader_id: Some(node.id + 1),
                 ..node_state
             },
             NodeState {
                 term: 10,
                 vote_for: None,
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..node_state
             },
             NodeState {
                 term: 10,
                 vote_for: Some(1),
-                kind: NodeKind::Follower,
+                leader_id: Some(node.id + 1),
                 ..node_state
             },
             NodeState {
                 term: 10,
                 vote_for: Some(1),
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..node_state
             },
         ];
@@ -481,22 +476,22 @@ mod tests {
         let node_states = [
             NodeState {
                 vote_for: None,
-                kind: NodeKind::Follower,
+                leader_id: Some(node.id + 1),
                 ..node_state
             },
             NodeState {
                 vote_for: None,
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..node_state
             },
             NodeState {
                 vote_for: Some(1),
-                kind: NodeKind::Follower,
+                leader_id: Some(node.id + 1),
                 ..node_state
             },
             NodeState {
                 vote_for: Some(1),
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..node_state
             },
         ];
@@ -628,7 +623,7 @@ mod tests {
         let node_state = {
             let mut node_state = node.state.lock().await;
             *node_state = NodeState {
-                kind: NodeKind::Leader,
+                leader_id: Some(node.id),
                 ..*node_state
             };
             node_state.clone()
@@ -667,9 +662,8 @@ mod tests {
         let mut msg_reqs = msg_reqs.into_iter();
 
         while let Some(msg_req) = msg_reqs.next() {
-            let _msg_res = node.handle_append_entries(1, msg_req).await;
-            let new_node_state = { node.state.lock().await.clone() };
-            assert_eq!(new_node_state.kind, NodeKind::Follower)
+            let _msg_res = node.handle_append_entries(node.id + 1, msg_req).await;
+            assert_eq!(node.is_leader().await, false);
         }
     }
 
