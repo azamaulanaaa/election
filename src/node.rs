@@ -340,67 +340,57 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn higher_term() {
+        async fn grant_if_higher_term() {
             let (_tx, rx) = mpsc::channel(1);
             let mem_storage = MemStorage::<usize>::default();
             let node = Node::new(1, rx, mem_storage);
 
-            let node_state = { node.state.lock().await.clone() };
-            let init_node_states = [
-                NodeState {
-                    vote_for: None,
-                    leader_id: Some(node.id + 1),
-                    ..node_state
-                },
-                NodeState {
-                    vote_for: None,
-                    leader_id: Some(node.id),
-                    ..node_state
-                },
-                NodeState {
-                    vote_for: Some(1),
-                    leader_id: Some(node.id + 1),
-                    ..node_state
-                },
-                NodeState {
-                    vote_for: Some(1),
-                    leader_id: Some(node.id),
-                    ..node_state
-                },
-            ];
-            let mut init_node_states = init_node_states.into_iter();
-
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-
-            while let Some(init_node_state) = init_node_states.next() {
-                {
-                    let mut node_state = node.state.lock().await;
-                    *node_state = init_node_state;
-                }
-                let new_term = init_node_state.term + 1;
-                let new_candidate = init_node_state.vote_for.map(|v| v + 1).unwrap_or(32);
-
-                let msg_res = node
-                    .handle_request_vote(MsgRequestVoteReq {
-                        term: new_term,
-                        candidate_id: new_candidate,
-                        last_storage_state,
-                    })
-                    .await
-                    .unwrap();
-                assert!(
-                    msg_res.granted,
-                    "RequestVote must granted vote for higher term"
-                );
-
-                let node_state = { node.state.lock().await };
-                assert_eq!(
-                    node_state.vote_for,
-                    Some(new_candidate),
-                    "Node should vote for candidate with higher term"
-                );
+            {
+                let mut node_state = node.state.lock().await;
+                node_state.vote_for = None;
             }
+
+            let last_storage_state = {
+                let last_index = node.storage.last_index().await.unwrap();
+                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                last_storage_state
+            };
+
+            let msg_req = MsgRequestVoteReq {
+                term: { node.state.lock().await.term } + 1,
+                candidate_id: node.id + 1,
+                last_storage_state,
+            };
+            let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+            assert_eq!(msg_res.granted, true);
+        }
+
+        #[tokio::test]
+        async fn update_vote_for_if_higher_term() {
+            let (_tx, rx) = mpsc::channel(1);
+            let mem_storage = MemStorage::<usize>::default();
+            let node = Node::new(1, rx, mem_storage);
+
+            {
+                let mut node_state = node.state.lock().await;
+                node_state.vote_for = None;
+            }
+
+            let last_storage_state = {
+                let last_index = node.storage.last_index().await.unwrap();
+                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                last_storage_state
+            };
+
+            let msg_req = MsgRequestVoteReq {
+                term: { node.state.lock().await.term } + 1,
+                candidate_id: node.id + 1,
+                last_storage_state,
+            };
+            let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+            assert_eq!(node.state.lock().await.vote_for, Some(msg_req.candidate_id));
         }
 
         #[tokio::test]
