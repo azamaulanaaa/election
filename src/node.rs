@@ -31,7 +31,7 @@ where
     S: Storage<E>,
     E: Clone + Send + Sync + PartialEq,
 {
-    id: usize,
+    id: u64,
     rx: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
     state: Mutex<NodeState>,
@@ -42,7 +42,7 @@ where
     S: Storage<E>,
     E: Clone + Send + Sync + PartialEq,
 {
-    pub fn new(id: usize, rx: mpsc::Receiver<Message<E>>, storage: S) -> Self {
+    pub fn new(id: u64, rx: mpsc::Receiver<Message<E>>, storage: S) -> Self {
         Self {
             id,
             rx: Mutex::new(rx),
