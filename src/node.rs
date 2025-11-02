@@ -196,48 +196,41 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn update_to_highest_term() {
+        async fn update_state_term_with_highest_term() {
             let (_tx_req, rx_req) = mpsc::channel(1);
             let mem_storage = MemStorage::<usize>::default();
             let node = Node::new(1, rx_req, mem_storage);
 
-            let node_state = { node.state.lock().await.clone() };
             let last_index = node.storage.last_index().await.unwrap();
             let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-            let new_term = node_state.term + 1;
 
-            let msg_reqs = [
-                MsgRequestVoteReq {
-                    term: new_term,
-                    candidate_id: 32,
-                    last_storage_state: last_storage_state.clone(),
-                },
-                MsgRequestVoteReq {
-                    term: new_term,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        term: last_storage_state.term + 1,
-                        ..last_storage_state
-                    },
-                },
-                MsgRequestVoteReq {
-                    term: new_term,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        index: last_storage_state.index + 1,
-                        ..last_storage_state
-                    },
-                },
-            ];
-            let mut msg_reqs = msg_reqs.into_iter();
+            let msg_req = MsgRequestVoteReq {
+                term: { node.state.lock().await.term } + 1,
+                candidate_id: node.id + 1,
+                last_storage_state,
+            };
+            let _msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
 
-            while let Some(msg_req) = msg_reqs.next() {
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
-                assert_eq!(msg_res.term, new_term);
+            assert_eq!(node.state.lock().await.term, msg_req.term);
+        }
 
-                let new_node_state = { node.state.lock().await.clone() };
-                assert_eq!(new_node_state.term, new_term)
-            }
+        #[tokio::test]
+        async fn response_with_state_term() {
+            let (_tx_req, rx_req) = mpsc::channel(1);
+            let mem_storage = MemStorage::<usize>::default();
+            let node = Node::new(1, rx_req, mem_storage);
+
+            let last_index = node.storage.last_index().await.unwrap();
+            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+
+            let msg_req = MsgRequestVoteReq {
+                term: { node.state.lock().await.term },
+                candidate_id: node.id + 1,
+                last_storage_state,
+            };
+            let _msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
+
+            assert_eq!(node.state.lock().await.term, msg_req.term);
         }
 
         #[tokio::test]
