@@ -233,7 +233,7 @@ mod tests {
             assert_eq!(node.state.lock().await.term, msg_req.term);
         }
 
-        mod reject_if_last_storage_state_is_behind {
+        mod no_grant_if_last_storage_state_is_behind {
             use super::*;
 
             #[tokio::test]
@@ -315,82 +315,86 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        async fn step_down_for_higher_term() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod higher_term {
+            use super::*;
 
-            {
-                let mut node_state = node.state.lock().await;
-                node_state.leader_id = Some(node.id);
-            }
+            #[tokio::test]
+            async fn step_down() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.leader_id = Some(node.id);
+                }
 
-            let msg_req = MsgRequestVoteReq {
-                term: { node.state.lock().await.term } + 1,
-                candidate_id: node.id + 1,
-                last_storage_state: last_storage_state.clone(),
-            };
-            let _msg_res = node.handle_request_vote(msg_req).await;
-
-            assert_ne!(node.state.lock().await.leader_id, Some(node.id));
-        }
-
-        #[tokio::test]
-        async fn grant_if_higher_term() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
-
-            {
-                let mut node_state = node.state.lock().await;
-                node_state.vote_for = None;
-            }
-
-            let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
                 let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-                last_storage_state
-            };
 
-            let msg_req = MsgRequestVoteReq {
-                term: { node.state.lock().await.term } + 1,
-                candidate_id: node.id + 1,
-                last_storage_state,
-            };
-            let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term } + 1,
+                    candidate_id: node.id + 1,
+                    last_storage_state: last_storage_state.clone(),
+                };
+                let _msg_res = node.handle_request_vote(msg_req).await;
 
-            assert_eq!(msg_res.granted, true);
-        }
-
-        #[tokio::test]
-        async fn update_vote_for_if_higher_term() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
-
-            {
-                let mut node_state = node.state.lock().await;
-                node_state.vote_for = None;
+                assert_ne!(node.state.lock().await.leader_id, Some(node.id));
             }
 
-            let last_storage_state = {
-                let last_index = node.storage.last_index().await.unwrap();
-                let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-                last_storage_state
-            };
+            #[tokio::test]
+            async fn grant() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let msg_req = MsgRequestVoteReq {
-                term: { node.state.lock().await.term } + 1,
-                candidate_id: node.id + 1,
-                last_storage_state,
-            };
-            let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.vote_for = None;
+                }
 
-            assert_eq!(node.state.lock().await.vote_for, Some(msg_req.candidate_id));
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term } + 1,
+                    candidate_id: node.id + 1,
+                    last_storage_state,
+                };
+                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+                assert_eq!(msg_res.granted, true);
+            }
+
+            #[tokio::test]
+            async fn update_vote_for() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
+
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.vote_for = None;
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgRequestVoteReq {
+                    term: { node.state.lock().await.term } + 1,
+                    candidate_id: node.id + 1,
+                    last_storage_state,
+                };
+                let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+
+                assert_eq!(node.state.lock().await.vote_for, Some(msg_req.candidate_id));
+            }
         }
 
         #[tokio::test]
