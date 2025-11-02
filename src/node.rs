@@ -665,6 +665,37 @@ mod tests {
 
                 assert_eq!(node.state.lock().await.leader_id, Some(new_leader_id))
             }
+
+            #[tokio::test]
+            async fn set_vote_for_to_empty() {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
+
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.vote_for = Some(node.id);
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term } + 1,
+                    prev_storage_state: last_storage_state,
+                    entries: Vec::new(),
+                    commited_index: { node.state.lock().await.term },
+                };
+                let _msg_res = node
+                    .handle_append_entries(node.id + 1, msg_req)
+                    .await
+                    .unwrap();
+
+                assert_eq!(node.state.lock().await.vote_for, None);
+            }
         }
 
         mod lower_term {
@@ -965,35 +996,6 @@ mod tests {
                     index: last_storage_state.index,
                 },
                 "Last storage state must updated"
-            );
-        }
-
-        #[tokio::test]
-        async fn reset_vote_for() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
-
-            let node_state = {
-                let mut node_state = node.state.lock().await;
-                node_state.term = 2;
-                node_state.vote_for = Some(2);
-                node_state.clone()
-            };
-
-            let msg_req = MsgAppendEntriesReq {
-                term: node_state.term,
-                commited_index: node_state.commited_index,
-                entries: Vec::new(),
-                prev_storage_state: StorageState::default(),
-            };
-            let msg_res = node.handle_append_entries(2, msg_req).await.unwrap();
-            assert!(msg_res.success, "Message response must be success");
-
-            let new_node_state = { node.state.lock().await.clone() };
-            assert_eq!(
-                new_node_state.vote_for, None,
-                "Node state's vote for must be reset after receiving success append entries"
             );
         }
     }
