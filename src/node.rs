@@ -908,95 +908,168 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        async fn match_storage_state_no_truncate() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod equal_term {
+            use super::*;
 
-            let node_state = {
-                let mut node_state = node.state.lock().await;
-                node_state.term = 2;
-                node_state.clone()
-            };
+            async fn init_node() -> Node<MemStorage<usize>, usize> {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.term = 2;
+                }
 
-            let entry = 1;
+                {
+                    node.storage
+                        .push(StorageValue {
+                            term: { node.state.lock().await.term } - 1,
+                            entry: 0,
+                        })
+                        .await
+                        .unwrap();
+                    node.storage
+                        .push(StorageValue {
+                            term: { node.state.lock().await.term },
+                            entry: 0,
+                        })
+                        .await
+                        .unwrap();
+                }
 
-            let msg_req = MsgAppendEntriesReq {
-                term: node_state.term,
-                commited_index: node_state.commited_index,
-                entries: vec![entry],
-                prev_storage_state: last_storage_state,
-            };
-            let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
-            assert!(msg_res.success, "Message response's success must be true");
+                node
+            }
 
-            let new_last_index = node.storage.last_index().await.unwrap();
+            mod push_no_truncate {
+                use super::*;
 
-            let new_entry = node.storage.get(new_last_index).await.unwrap().entry;
-            assert!(new_entry == entry, "Entry must be stored to the storage");
+                const ENTRY: [usize; 2] = [1, 2];
 
-            let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
-            assert_eq!(
-                new_last_stroage_state,
-                StorageState {
-                    term: node_state.term,
-                    index: last_storage_state.index + 1,
-                },
-                "Last storage state must updated"
-            );
-        }
+                async fn send_msg(node: &Node<MemStorage<usize>, usize>) -> MsgAppendEntriesRes {
+                    let last_storage_state = {
+                        let last_index = node.storage.last_index().await.unwrap();
+                        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                        last_storage_state
+                    };
 
-        #[tokio::test]
-        async fn match_storage_state_with_truncate() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+                    let msg_req = MsgAppendEntriesReq {
+                        term: { node.state.lock().await.term },
+                        commited_index: { node.state.lock().await.commited_index },
+                        entries: Vec::from(ENTRY),
+                        prev_storage_state: last_storage_state,
+                    };
+                    let msg_res = node
+                        .handle_append_entries(node.id + 1, msg_req)
+                        .await
+                        .unwrap();
 
-            let node_state = {
-                let mut node_state = node.state.lock().await;
-                node_state.term = 2;
-                node_state.clone()
-            };
-            node.storage
-                .push(StorageValue {
-                    term: node_state.term,
-                    entry: 0,
-                })
-                .await
-                .unwrap();
+                    msg_res
+                }
 
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                #[tokio::test]
+                async fn response_success_is_true() {
+                    let node = init_node().await;
+                    let msg_res = send_msg(&node).await;
 
-            let entry = 1;
+                    assert_eq!(msg_res.success, true);
+                }
 
-            let msg_req = MsgAppendEntriesReq {
-                term: node_state.term,
-                commited_index: node_state.commited_index,
-                entries: vec![entry],
-                prev_storage_state: StorageState::default(),
-            };
-            let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
-            assert!(msg_res.success, "Message response's success must be true");
+                #[tokio::test]
+                async fn match_last_storage_index() {
+                    let node = init_node().await;
 
-            let new_last_index = node.storage.last_index().await.unwrap();
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let expected_last_index = last_index + ENTRY.len() as u64;
 
-            let new_entry = node.storage.get(new_last_index).await.unwrap().entry;
-            assert!(new_entry == entry, "Entry must be stored to the storage");
+                    let _msg_res = send_msg(&node).await;
 
-            let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
-            assert_eq!(
-                new_last_stroage_state,
-                StorageState {
-                    term: node_state.term,
-                    index: last_storage_state.index,
-                },
-                "Last storage state must updated"
-            );
+                    let last_index = node.storage.last_index().await.unwrap();
+
+                    assert_eq!(last_index, expected_last_index);
+                }
+
+                #[tokio::test]
+                async fn match_storage_entity() {
+                    let node = init_node().await;
+
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let _msg_res = send_msg(&node).await;
+
+                    assert_eq!(
+                        node.storage.get(last_index + 1).await.unwrap().entry,
+                        ENTRY[0]
+                    );
+                    assert_eq!(
+                        node.storage.get(last_index + 2).await.unwrap().entry,
+                        ENTRY[1]
+                    );
+                }
+            }
+
+            mod push_with_truncate {
+                use super::*;
+
+                const ENTRY: [usize; 2] = [1, 2];
+
+                async fn send_msg(node: &Node<MemStorage<usize>, usize>) -> MsgAppendEntriesRes {
+                    let last_storage_state = {
+                        let last_index = node.storage.last_index().await.unwrap();
+                        let last_storage_state =
+                            node.storage.get_state(last_index - 1).await.unwrap();
+                        last_storage_state
+                    };
+
+                    let msg_req = MsgAppendEntriesReq {
+                        term: { node.state.lock().await.term },
+                        commited_index: { node.state.lock().await.commited_index },
+                        entries: Vec::from(ENTRY),
+                        prev_storage_state: last_storage_state,
+                    };
+                    let msg_res = node
+                        .handle_append_entries(node.id + 1, msg_req)
+                        .await
+                        .unwrap();
+
+                    msg_res
+                }
+
+                #[tokio::test]
+                async fn response_success_is_true() {
+                    let node = init_node().await;
+                    let msg_res = send_msg(&node).await;
+
+                    assert_eq!(msg_res.success, true);
+                }
+
+                #[tokio::test]
+                async fn match_last_storage_index() {
+                    let node = init_node().await;
+
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let expected_last_index = last_index - 1 + ENTRY.len() as u64;
+
+                    let _msg_res = send_msg(&node).await;
+
+                    let last_index = node.storage.last_index().await.unwrap();
+
+                    assert_eq!(last_index, expected_last_index);
+                }
+
+                #[tokio::test]
+                async fn match_storage_entity() {
+                    let node = init_node().await;
+
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let _msg_res = send_msg(&node).await;
+
+                    assert_eq!(node.storage.get(last_index).await.unwrap().entry, ENTRY[0]);
+                    assert_eq!(
+                        node.storage.get(last_index + 1).await.unwrap().entry,
+                        ENTRY[1]
+                    );
+                }
+            }
         }
     }
 }
