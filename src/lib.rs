@@ -37,7 +37,7 @@ where
     id: usize,
     rx: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
-    node_state: Mutex<NodeState>,
+    state: Mutex<NodeState>,
 }
 
 impl<S, E> Node<S, E>
@@ -49,7 +49,7 @@ where
         Self {
             id,
             rx: Mutex::new(rx),
-            node_state: Default::default(),
+            state: Default::default(),
             storage,
         }
     }
@@ -72,7 +72,7 @@ where
     }
 
     async fn handle_request_vote(&self, msg: MsgRequestVoteReq) -> MsgRequestVoteRes {
-        let mut node_state = self.node_state.lock().await;
+        let mut node_state = self.state.lock().await;
         let last_index = self.storage.last_index().await.unwrap();
         let last_storage_state = self.storage.get_state(last_index).await.unwrap();
 
@@ -104,7 +104,7 @@ where
         from: u64,
         msg: MsgAppendEntriesReq<E>,
     ) -> MsgAppendEntriesRes {
-        let mut node_state = self.node_state.lock().await;
+        let mut node_state = self.state.lock().await;
 
         if node_state.term < msg.term {
             node_state.kind = NodeKind::Follower;
@@ -184,7 +184,7 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx_req, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
+        let node_state = { node.state.lock().await.clone() };
         let last_index = node.storage.last_index().await.unwrap();
         let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
@@ -218,7 +218,7 @@ mod tests {
             let msg_res = node.handle_request_vote(msg_req).await;
             assert_eq!(msg_res.term, new_term);
 
-            let new_node_state = { node.node_state.lock().await.clone() };
+            let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.term, new_term)
         }
     }
@@ -230,7 +230,7 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             node_state.term = node_state.term + 1;
             node_state.clone()
         };
@@ -287,7 +287,7 @@ mod tests {
             let msg_res = node.handle_request_vote(msg_req).await;
             assert_eq!(msg_res.granted, false);
 
-            let new_node_state = { node.node_state.lock().await.clone() };
+            let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.vote_for, node_state.vote_for)
         }
     }
@@ -299,7 +299,7 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             *node_state = NodeState {
                 kind: NodeKind::Leader,
                 ..*node_state
@@ -338,7 +338,7 @@ mod tests {
 
         while let Some(msg_req) = msg_reqs.next() {
             let _msg_res = node.handle_request_vote(msg_req).await;
-            let new_node_state = { node.node_state.lock().await.clone() };
+            let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.kind, NodeKind::Follower)
         }
     }
@@ -349,7 +349,7 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
+        let node_state = { node.state.lock().await.clone() };
         let init_node_states = [
             NodeState {
                 vote_for: None,
@@ -379,7 +379,7 @@ mod tests {
 
         while let Some(init_node_state) = init_node_states.next() {
             {
-                let mut node_state = node.node_state.lock().await;
+                let mut node_state = node.state.lock().await;
                 *node_state = init_node_state;
             }
             let new_term = init_node_state.term + 1;
@@ -397,7 +397,7 @@ mod tests {
                 "RequestVote must granted vote for higher term"
             );
 
-            let node_state = { node.node_state.lock().await };
+            let node_state = { node.state.lock().await };
             assert_eq!(
                 node_state.vote_for,
                 Some(new_candidate),
@@ -412,7 +412,7 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
+        let node_state = { node.state.lock().await.clone() };
         let init_node_states = [
             NodeState {
                 term: 10,
@@ -446,7 +446,7 @@ mod tests {
 
         while let Some(init_node_state) = init_node_states.next() {
             {
-                let mut node_state = node.node_state.lock().await;
+                let mut node_state = node.state.lock().await;
                 *node_state = init_node_state;
             }
             let new_term = init_node_state.term - 1;
@@ -464,7 +464,7 @@ mod tests {
                 "RequestVote must not granted vote for lower term"
             );
 
-            let node_state = { node.node_state.lock().await };
+            let node_state = { node.state.lock().await };
             assert_eq!(
                 init_node_state.vote_for, node_state.vote_for,
                 "Node should change what it vote for when see lower term"
@@ -478,7 +478,7 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
+        let node_state = { node.state.lock().await.clone() };
         let node_states = [
             NodeState {
                 vote_for: None,
@@ -508,7 +508,7 @@ mod tests {
 
         while let Some(init_node_state) = node_states.next() {
             {
-                let mut node_state = node.node_state.lock().await;
+                let mut node_state = node.state.lock().await;
                 *node_state = init_node_state;
             }
 
@@ -536,7 +536,7 @@ mod tests {
                                 msg_res.granted,
                                 "RequestVote must granted vote when voting for same candidate"
                             );
-                            let node_state = { node.node_state.lock().await };
+                            let node_state = { node.state.lock().await };
                             assert_eq!(
                                 node_state.vote_for, init_node_state.vote_for,
                                 "Node should not change vote for when voting for same candidate"
@@ -547,7 +547,7 @@ mod tests {
                                 "RequestVote must not grant vote when not voting for different candidate"
                             );
 
-                            let node_state = { node.node_state.lock().await };
+                            let node_state = { node.state.lock().await };
                             assert_eq!(
                                 node_state.vote_for, init_node_state.vote_for,
                                 "Node should not change vote for when not voting for diffent candidate"
@@ -560,7 +560,7 @@ mod tests {
                             "RequestVote must granted vote when not voting for any candidate"
                         );
 
-                        let node_state = { node.node_state.lock().await };
+                        let node_state = { node.state.lock().await };
                         assert_eq!(
                             node_state.vote_for,
                             Some(msg_req.candidate_id),
@@ -578,7 +578,7 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
+        let node_state = { node.state.lock().await.clone() };
         let last_index = node.storage.last_index().await.unwrap();
         let last_storage_state = node.storage.get_state(last_index).await.unwrap();
         let new_term = node_state.term + 1;
@@ -615,7 +615,7 @@ mod tests {
             let msg_res = node.handle_append_entries(1, msg_req).await;
             assert_eq!(msg_res.term, new_term);
 
-            let new_node_state = { node.node_state.lock().await.clone() };
+            let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.term, new_term)
         }
     }
@@ -627,7 +627,7 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             *node_state = NodeState {
                 kind: NodeKind::Leader,
                 ..*node_state
@@ -669,7 +669,7 @@ mod tests {
 
         while let Some(msg_req) = msg_reqs.next() {
             let _msg_res = node.handle_append_entries(1, msg_req).await;
-            let new_node_state = { node.node_state.lock().await.clone() };
+            let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.kind, NodeKind::Follower)
         }
     }
@@ -680,7 +680,7 @@ mod tests {
         let mem_storage = MemStorage::<usize>::default();
         let node = Node::new(1, rx, mem_storage);
 
-        let node_state = { node.node_state.lock().await.clone() };
+        let node_state = { node.state.lock().await.clone() };
 
         let last_index = node.storage.last_index().await.unwrap();
         let last_storage_state = node.storage.get_state(last_index).await.unwrap();
@@ -717,7 +717,7 @@ mod tests {
 
         while let Some(msg_req) = msg_reqs.next() {
             let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
-            let new_node_state = { node.node_state.lock().await.clone() };
+            let new_node_state = { node.state.lock().await.clone() };
             assert_eq!(new_node_state.leader_id, new_leader_id)
         }
     }
@@ -734,7 +734,7 @@ mod tests {
             .await
             .unwrap();
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             node_state.term = term;
             node_state.clone()
         };
@@ -759,7 +759,7 @@ mod tests {
             "Message response's term must be equal to node state's term",
         );
 
-        let new_node_state = { node.node_state.lock().await.clone() };
+        let new_node_state = { node.state.lock().await.clone() };
         assert_eq!(
             new_node_state, node_state,
             "Node state must not change due to lower term",
@@ -780,7 +780,7 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             node_state.term = 2;
             node_state.clone()
         };
@@ -848,7 +848,7 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             node_state.term = 2;
             node_state.clone()
         };
@@ -890,7 +890,7 @@ mod tests {
         let node = Node::new(1, rx, mem_storage);
 
         let node_state = {
-            let mut node_state = node.node_state.lock().await;
+            let mut node_state = node.state.lock().await;
             node_state.term = 2;
             node_state.clone()
         };
