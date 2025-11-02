@@ -667,55 +667,67 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        async fn reject_on_lower_term() {
-            let (_tx, rx) = mpsc::channel(1);
-            let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+        mod lower_term {
+            use super::*;
 
-            let term = 2;
-            node.storage
-                .push(StorageValue { term, entry: 0 })
-                .await
-                .unwrap();
-            let node_state = {
-                let mut node_state = node.state.lock().await;
-                node_state.term = term;
-                node_state.clone()
-            };
+            async fn new_node() -> Node<MemStorage<usize>, usize> {
+                let (_tx, rx) = mpsc::channel(1);
+                let mem_storage = MemStorage::<usize>::default();
+                let node = Node::new(1, rx, mem_storage);
 
-            let last_index = node.storage.last_index().await.unwrap();
-            let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                {
+                    let mut node_state = node.state.lock().await;
+                    node_state.term = node_state.term + 1;
+                }
 
-            let msg_req = MsgAppendEntriesReq {
-                term: node_state.term - 1,
-                entries: vec![1],
-                commited_index: node_state.commited_index,
-                prev_storage_state: last_storage_state.clone(),
-            };
+                node
+            }
 
-            let msg_res = node.handle_append_entries(1, msg_req).await.unwrap();
-            assert!(
-                !msg_res.success,
-                "Message response's success must be false when the term is lower"
-            );
-            assert_eq!(
-                msg_res.term, node_state.term,
-                "Message response's term must be equal to node state's term",
-            );
+            async fn send_msg(node: &Node<MemStorage<usize>, usize>) -> MsgAppendEntriesRes {
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                    last_storage_state
+                };
 
-            let new_node_state = { node.state.lock().await.clone() };
-            assert_eq!(
-                new_node_state, node_state,
-                "Node state must not change due to lower term",
-            );
+                let msg_req = MsgAppendEntriesReq {
+                    term: { node.state.lock().await.term } - 1,
+                    prev_storage_state: last_storage_state,
+                    entries: Vec::new(),
+                    commited_index: { node.state.lock().await.term },
+                };
+                let msg_res = node
+                    .handle_append_entries(node.id + 1, msg_req)
+                    .await
+                    .unwrap();
 
-            let new_last_index = node.storage.last_index().await.unwrap();
-            let new_last_stroage_state = node.storage.get_state(new_last_index).await.unwrap();
-            assert_eq!(
-                new_last_stroage_state, last_storage_state,
-                "Last storage state must not change due to lower term"
-            );
+                msg_res
+            }
+
+            #[tokio::test]
+            async fn response_success_is_false() {
+                let node = new_node().await;
+                let msg_res = send_msg(&node).await;
+
+                assert_eq!(msg_res.success, false);
+            }
+
+            #[tokio::test]
+            async fn no_change_state() {
+                let node = new_node().await;
+                let init_node_state = { node.state.lock().await.clone() };
+                let _msg_res = send_msg(&node).await;
+
+                assert_eq!(node.state.lock().await.clone(), init_node_state);
+            }
+
+            #[tokio::test]
+            async fn no_change_storage() {
+                let node = new_node().await;
+                let _msg_res = send_msg(&node).await;
+
+                assert_eq!(node.storage.last_index().await.unwrap(), 0);
+            }
         }
 
         #[tokio::test]
