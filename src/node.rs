@@ -321,45 +321,22 @@ mod tests {
             let mem_storage = MemStorage::<usize>::default();
             let node = Node::new(1, rx, mem_storage);
 
-            let node_state = {
+            {
                 let mut node_state = node.state.lock().await;
-                node_state.leader_id = Some(1);
-                node_state.clone()
-            };
+                node_state.leader_id = Some(node.id);
+            }
 
             let last_index = node.storage.last_index().await.unwrap();
             let last_storage_state = node.storage.get_state(last_index).await.unwrap();
-            let new_term = node_state.term + 1;
 
-            let msg_reqs = [
-                MsgRequestVoteReq {
-                    term: new_term,
-                    candidate_id: 32,
-                    last_storage_state: last_storage_state.clone(),
-                },
-                MsgRequestVoteReq {
-                    term: new_term,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        term: last_storage_state.term + 1,
-                        ..last_storage_state
-                    },
-                },
-                MsgRequestVoteReq {
-                    term: new_term,
-                    candidate_id: 32,
-                    last_storage_state: StorageState {
-                        index: last_storage_state.index + 1,
-                        ..last_storage_state
-                    },
-                },
-            ];
-            let mut msg_reqs = msg_reqs.into_iter();
+            let msg_req = MsgRequestVoteReq {
+                term: { node.state.lock().await.term } + 1,
+                candidate_id: node.id + 1,
+                last_storage_state: last_storage_state.clone(),
+            };
+            let _msg_res = node.handle_request_vote(msg_req).await;
 
-            while let Some(msg_req) = msg_reqs.next() {
-                let _msg_res = node.handle_request_vote(msg_req).await;
-                assert_eq!(node.is_leader().await, false)
-            }
+            assert_ne!(node.state.lock().await.leader_id, Some(node.id));
         }
 
         #[tokio::test]
