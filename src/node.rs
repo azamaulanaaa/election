@@ -74,13 +74,14 @@ where
             .is_some_and(|id| id == self.id)
     }
 
-    async fn start_election(&self) {
+    async fn start_election(&self) -> Result<(), NodeError> {
         self.state
-            .set_term(self.state.get_term().await.unwrap() + 1)
-            .await
-            .unwrap();
-        let vote_for = self.state.get_vote_for().await.unwrap().unwrap_or(self.id);
-        self.state.set_vote_for(Some(vote_for)).await.unwrap();
+            .set_term(self.state.get_term().await? + 1)
+            .await?;
+        let vote_for = self.state.get_vote_for().await?.unwrap_or(self.id);
+        self.state.set_vote_for(Some(vote_for)).await?;
+
+        Ok(())
     }
 
     async fn handle_request_vote(
@@ -1241,7 +1242,7 @@ mod tests {
 
             let init_term = node.state.get_term().await.unwrap();
 
-            node.start_election().await;
+            node.start_election().await.unwrap();
 
             let term = node.state.get_term().await.unwrap();
 
@@ -1256,7 +1257,7 @@ mod tests {
                 node.state.set_vote_for(None).await.unwrap();
             }
 
-            node.start_election().await;
+            node.start_election().await.unwrap();
 
             let vote_for = node.state.get_vote_for().await.unwrap();
 
