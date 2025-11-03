@@ -111,14 +111,14 @@ where
         from: u64,
         msg: MsgAppendEntriesReq<E>,
     ) -> Result<MsgAppendEntriesRes, NodeError> {
-        if self.state.get_term().await? < msg.term {
-            self.state.set_leader_id(Some(from)).await?;
-        }
         self.state
             .set_term(self.state.get_term().await?.max(msg.term))
             .await?;
 
         let success = self.state.get_term().await? == msg.term;
+        if success {
+            self.state.set_leader_id(Some(from)).await?;
+        }
 
         let storage_state = self.storage.get_state(msg.prev_storage_state.index).await;
         let success = success && storage_state.is_ok_and(|v| v == msg.prev_storage_state);
@@ -1123,6 +1123,38 @@ mod tests {
                         ENTRY[1]
                     );
                 }
+            }
+
+            #[tokio::test]
+            async fn update_leader_id() {
+                let node = init_node().await;
+
+                {
+                    node.state.set_leader_id(Some(node.id)).await.unwrap();
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index - 1).await.unwrap();
+                    last_storage_state
+                };
+
+                let new_leader_id = node.state.get_leader_id().await.unwrap().unwrap() + 1;
+                let msg_req = MsgAppendEntriesReq {
+                    term: node.state.get_term().await.unwrap(),
+                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    entries: Vec::new(),
+                    prev_storage_state: last_storage_state,
+                };
+                let _msg_res = node
+                    .handle_append_entries(new_leader_id, msg_req)
+                    .await
+                    .unwrap();
+
+                assert_eq!(
+                    node.state.get_leader_id().await.unwrap(),
+                    Some(new_leader_id)
+                );
             }
         }
     }
