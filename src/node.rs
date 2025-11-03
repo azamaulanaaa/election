@@ -684,12 +684,18 @@ mod tests {
         mod higher_term {
             use super::*;
 
-            #[tokio::test]
-            async fn update_leader_id() {
+            async fn init_node() -> Node<MemState, MemStorage<usize>, usize> {
                 let (_tx, rx) = mpsc::channel(1);
                 let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_state, mem_storage);
+
+                node
+            }
+
+            #[tokio::test]
+            async fn update_leader_id() {
+                let node = init_node().await;
 
                 {
                     node.state.set_leader_id(node.id + 1).await.unwrap();
@@ -718,10 +724,7 @@ mod tests {
 
             #[tokio::test]
             async fn set_vote_for_to_empty() {
-                let (_tx, rx) = mpsc::channel(1);
-                let mem_state = MemState::default();
-                let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_state, mem_storage);
+                let node = init_node().await;
 
                 {
                     node.state.set_vote_for(Some(node.id)).await.unwrap();
