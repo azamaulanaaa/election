@@ -79,6 +79,8 @@ where
             .set_term(self.state.get_term().await.unwrap() + 1)
             .await
             .unwrap();
+        let vote_for = self.state.get_vote_for().await.unwrap().unwrap_or(self.id);
+        self.state.set_vote_for(Some(vote_for)).await.unwrap();
     }
 
     async fn handle_request_vote(
@@ -1244,6 +1246,21 @@ mod tests {
             let term = node.state.get_term().await.unwrap();
 
             assert_eq!(term, init_term + 1);
+        }
+
+        #[tokio::test]
+        async fn vote_for_self_if_empty() {
+            let node = init_node().await;
+
+            {
+                node.state.set_vote_for(None).await.unwrap();
+            }
+
+            node.start_election().await;
+
+            let vote_for = node.state.get_vote_for().await.unwrap();
+
+            assert_eq!(vote_for, Some(node.id));
         }
     }
 }
