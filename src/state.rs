@@ -22,12 +22,6 @@ pub trait State: Sync {
         vote_for: I,
     ) -> Result<(), StateError>;
     async fn get_vote_for(&self) -> Result<Option<u64>, StateError>;
-
-    async fn set_commited_index<I: Into<u64> + Send>(
-        &self,
-        commited_index: I,
-    ) -> Result<(), StateError>;
-    async fn get_commited_index(&self) -> Result<u64, StateError>;
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
@@ -35,7 +29,6 @@ pub struct MemStateInner {
     term: u64,
     leader_id: Option<u64>,
     vote_for: Option<u64>,
-    commited_index: u64,
 }
 
 #[derive(Default, Debug)]
@@ -88,21 +81,5 @@ impl State for MemState {
         let vote_for = self.inner.read().await.vote_for;
 
         Ok(vote_for)
-    }
-
-    async fn set_commited_index<I: Into<u64> + Send>(
-        &self,
-        commited_index: I,
-    ) -> Result<(), StateError> {
-        let mut state = self.inner.write().await;
-        state.commited_index = commited_index.into();
-
-        Ok(())
-    }
-
-    async fn get_commited_index(&self) -> Result<u64, StateError> {
-        let commited_index = self.inner.read().await.commited_index;
-
-        Ok(commited_index)
     }
 }

@@ -460,7 +460,6 @@ mod tests {
                     node.state.get_term().await.unwrap(),
                     node.state.get_leader_id().await.unwrap(),
                     node.state.get_vote_for().await.unwrap(),
-                    node.state.get_commited_index().await.unwrap(),
                 );
 
                 let last_storage_state = {
@@ -479,7 +478,6 @@ mod tests {
                     node.state.get_term().await.unwrap(),
                     node.state.get_leader_id().await.unwrap(),
                     node.state.get_vote_for().await.unwrap(),
-                    node.state.get_commited_index().await.unwrap(),
                 );
 
                 assert_eq!(state, init_state);
@@ -641,7 +639,7 @@ mod tests {
             let msg_req = MsgAppendEntriesReq {
                 term: node.state.get_term().await.unwrap() + 1,
                 prev_storage_state: last_storage_state,
-                commited_index: node.state.get_commited_index().await.unwrap(),
+                commited_index: node.storage.get_commited_index().await.unwrap(),
                 entries: Vec::new(),
             };
             let _msg_res = node
@@ -668,7 +666,7 @@ mod tests {
             let msg_req = MsgAppendEntriesReq {
                 term: node.state.get_term().await.unwrap(),
                 prev_storage_state: last_storage_state,
-                commited_index: node.state.get_commited_index().await.unwrap(),
+                commited_index: node.storage.get_commited_index().await.unwrap(),
                 entries: Vec::new(),
             };
             let msg_res = node
@@ -704,7 +702,7 @@ mod tests {
                     term: node.state.get_term().await.unwrap() + 1,
                     prev_storage_state: last_storage_state,
                     entries: Vec::new(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
 
@@ -735,7 +733,7 @@ mod tests {
                     term: node.state.get_term().await.unwrap() + 1,
                     prev_storage_state: last_storage_state,
                     entries: Vec::new(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node
                     .handle_append_entries(node.id + 1, msg_req)
@@ -776,7 +774,7 @@ mod tests {
                     term: node.state.get_term().await.unwrap() - 1,
                     prev_storage_state: last_storage_state,
                     entries: Vec::new(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let msg_res = node
                     .handle_append_entries(node.id + 1, msg_req)
@@ -801,7 +799,6 @@ mod tests {
                     node.state.get_term().await.unwrap(),
                     node.state.get_leader_id().await.unwrap(),
                     node.state.get_vote_for().await.unwrap(),
-                    node.state.get_commited_index().await.unwrap(),
                 );
                 let _msg_res = send_msg(&node).await;
 
@@ -809,7 +806,6 @@ mod tests {
                     node.state.get_term().await.unwrap(),
                     node.state.get_leader_id().await.unwrap(),
                     node.state.get_vote_for().await.unwrap(),
-                    node.state.get_commited_index().await.unwrap(),
                 );
 
                 assert_eq!(state, init_state);
@@ -874,7 +870,7 @@ mod tests {
                 let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
                     term: node.state.get_term().await.unwrap(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         term: last_storage_state.term + 1,
@@ -901,7 +897,7 @@ mod tests {
 
                 let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                     term: node.state.get_term().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
@@ -930,7 +926,7 @@ mod tests {
                 let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
                     term: node.state.get_term().await.unwrap(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         index: last_storage_state.index + 1,
@@ -958,7 +954,7 @@ mod tests {
                 let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
                     term: node.state.get_term().await.unwrap(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         index: last_storage_state.index - 1,
@@ -1023,7 +1019,7 @@ mod tests {
 
                     let msg_req = MsgAppendEntriesReq {
                         term: node.state.get_term().await.unwrap(),
-                        commited_index: node.state.get_commited_index().await.unwrap(),
+                        commited_index: node.storage.get_commited_index().await.unwrap(),
                         entries: Vec::from(ENTRY),
                         prev_storage_state: last_storage_state,
                     };
@@ -1092,7 +1088,7 @@ mod tests {
 
                     let msg_req = MsgAppendEntriesReq {
                         term: node.state.get_term().await.unwrap(),
-                        commited_index: node.state.get_commited_index().await.unwrap(),
+                        commited_index: node.storage.get_commited_index().await.unwrap(),
                         entries: Vec::from(ENTRY),
                         prev_storage_state: last_storage_state,
                     };
@@ -1158,7 +1154,7 @@ mod tests {
                 let new_leader_id = node.state.get_leader_id().await.unwrap().unwrap() + 1;
                 let msg_req = MsgAppendEntriesReq {
                     term: node.state.get_term().await.unwrap(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: last_storage_state,
                 };
@@ -1189,7 +1185,7 @@ mod tests {
 
                 let msg_req = MsgAppendEntriesReq {
                     term: node.state.get_term().await.unwrap(),
-                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    commited_index: node.storage.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: last_storage_state,
                 };
