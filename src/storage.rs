@@ -44,11 +44,19 @@ where
 }
 
 #[derive(Default)]
+pub struct MemStorageInner<E>
+where
+    E: Clone + Send + Sync + PartialEq + Debug,
+{
+    vector: Vec<StorageValue<E>>,
+}
+
+#[derive(Default)]
 pub struct MemStorage<E>
 where
     E: Clone + Send + Sync + PartialEq + Debug,
 {
-    vector: RwLock<Vec<StorageValue<E>>>,
+    inner: RwLock<MemStorageInner<E>>,
 }
 
 #[async_trait::async_trait]
@@ -57,7 +65,7 @@ where
     E: Clone + Send + Sync + PartialEq + Debug,
 {
     async fn push(&self, value: StorageValue<E>) -> Result<(), StorageError> {
-        self.vector.write().await.push(value);
+        self.inner.write().await.vector.push(value);
 
         Ok(())
     }
@@ -69,9 +77,10 @@ where
         let inner_index = index - 1;
         let size = self.last_index().await?;
 
-        self.vector
+        self.inner
             .read()
             .await
+            .vector
             .get(inner_index as usize)
             .ok_or(StorageError::OutOfBound { index, size })
             .map(|value| value.clone())
@@ -84,13 +93,13 @@ where
 
         let new_len = index - 1;
 
-        self.vector.write().await.truncate(new_len as usize);
+        self.inner.write().await.vector.truncate(new_len as usize);
 
         Ok(())
     }
 
     async fn last_index(&self) -> Result<u64, StorageError> {
-        Ok(self.vector.read().await.len() as u64)
+        Ok(self.inner.read().await.vector.len() as u64)
     }
 }
 
