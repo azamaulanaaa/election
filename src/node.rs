@@ -7,7 +7,7 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
-    state::{MemState, State, StateError},
+    state::{State, StateError},
     storage::{Storage, StorageError, StorageValue},
 };
 
@@ -19,27 +19,29 @@ pub enum NodeError {
     State(#[from] StateError),
 }
 
-pub struct Node<S, E>
+pub struct Node<T, S, E>
 where
+    T: State,
     S: Storage<E>,
     E: Clone + Send + Sync + PartialEq + Debug,
 {
     id: u64,
     rx: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
-    state: MemState,
+    state: T,
 }
 
-impl<S, E> Node<S, E>
+impl<T, S, E> Node<T, S, E>
 where
+    T: State,
     S: Storage<E>,
     E: Clone + Send + Sync + PartialEq + Debug,
 {
-    pub fn new(id: u64, rx: mpsc::Receiver<Message<E>>, storage: S) -> Self {
+    pub fn new(id: u64, rx: mpsc::Receiver<Message<E>>, state: T, storage: S) -> Self {
         Self {
             id,
             rx: Mutex::new(rx),
-            state: Default::default(),
+            state,
             storage,
         }
     }
@@ -159,15 +161,16 @@ mod tests {
     use futures::channel::mpsc;
     use tokio::time;
 
-    use crate::storage::MemStorage;
+    use crate::{state::MemState, storage::MemStorage};
 
     use super::*;
 
     #[tokio::test]
     async fn stop_run_when_no_sender() {
         let (tx, rx) = mpsc::channel(1);
+        let mem_state = MemState::default();
         let mem_storage = MemStorage::<usize>::default();
-        let node = Node::new(1, rx, mem_storage);
+        let node = Node::new(1, rx, mem_state, mem_storage);
         let timeout = time::Duration::from_millis(100);
 
         {
@@ -194,8 +197,9 @@ mod tests {
         #[tokio::test]
         async fn update_state_term_with_highest_term() {
             let (_tx_req, rx_req) = mpsc::channel(1);
+            let mem_state = MemState::default();
             let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx_req, mem_storage);
+            let node = Node::new(1, rx_req, mem_state, mem_storage);
 
             let last_index = node.storage.last_index().await.unwrap();
             let last_storage_state = node.storage.get_state(last_index).await.unwrap();
@@ -213,8 +217,9 @@ mod tests {
         #[tokio::test]
         async fn response_with_state_term() {
             let (_tx_req, rx_req) = mpsc::channel(1);
+            let mem_state = MemState::default();
             let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx_req, mem_storage);
+            let node = Node::new(1, rx_req, mem_state, mem_storage);
 
             let last_index = node.storage.last_index().await.unwrap();
             let last_storage_state = node.storage.get_state(last_index).await.unwrap();
@@ -235,8 +240,9 @@ mod tests {
             #[tokio::test]
             async fn term_is_older() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 node.state.set_term(4_u64).await.unwrap();
                 {
@@ -270,8 +276,9 @@ mod tests {
             #[tokio::test]
             async fn index_is_older() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 node.state.set_term(4_u64).await.unwrap();
                 {
@@ -311,8 +318,9 @@ mod tests {
             #[tokio::test]
             async fn step_down() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 node.state.set_leader_id(Some(node.id)).await.unwrap();
 
@@ -332,8 +340,9 @@ mod tests {
             #[tokio::test]
             async fn grant() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 node.state.set_vote_for(None).await.unwrap();
 
@@ -356,8 +365,9 @@ mod tests {
             #[tokio::test]
             async fn update_vote_for() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 node.state.set_vote_for(None).await.unwrap();
 
@@ -387,8 +397,9 @@ mod tests {
             #[tokio::test]
             async fn no_grant() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -417,8 +428,9 @@ mod tests {
             #[tokio::test]
             async fn no_change() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -464,8 +476,9 @@ mod tests {
             #[tokio::test]
             async fn grant_for_empty_vote_for() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -494,8 +507,9 @@ mod tests {
             #[tokio::test]
             async fn grant_for_voting_same_candidate() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
@@ -524,8 +538,9 @@ mod tests {
             #[tokio::test]
             async fn no_grant_for_voting_different_candidate() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
@@ -554,8 +569,9 @@ mod tests {
             #[tokio::test]
             async fn update_vote_for_if_empty_vote_for() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state
@@ -596,8 +612,9 @@ mod tests {
         #[tokio::test]
         async fn update_term_to_highest_term() {
             let (_tx, rx) = mpsc::channel(1);
+            let mem_state = MemState::default();
             let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+            let node = Node::new(1, rx, mem_state, mem_storage);
 
             let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
@@ -622,8 +639,9 @@ mod tests {
         #[tokio::test]
         async fn response_with_state_term() {
             let (_tx, rx) = mpsc::channel(1);
+            let mem_state = MemState::default();
             let mem_storage = MemStorage::<usize>::default();
-            let node = Node::new(1, rx, mem_storage);
+            let node = Node::new(1, rx, mem_state, mem_storage);
 
             let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
@@ -651,8 +669,9 @@ mod tests {
             #[tokio::test]
             async fn update_leader_id() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_leader_id(node.id + 1).await.unwrap();
@@ -682,8 +701,9 @@ mod tests {
             #[tokio::test]
             async fn set_vote_for_to_empty() {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_vote_for(Some(node.id)).await.unwrap();
@@ -713,10 +733,11 @@ mod tests {
         mod lower_term {
             use super::*;
 
-            async fn new_node() -> Node<MemStorage<usize>, usize> {
+            async fn new_node() -> Node<MemState, MemStorage<usize>, usize> {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 node.state
                     .set_term(node.state.get_term().await.unwrap() + 1)
@@ -726,7 +747,9 @@ mod tests {
                 node
             }
 
-            async fn send_msg(node: &Node<MemStorage<usize>, usize>) -> MsgAppendEntriesRes {
+            async fn send_msg(
+                node: &Node<MemState, MemStorage<usize>, usize>,
+            ) -> MsgAppendEntriesRes {
                 let last_storage_state = {
                     let last_index = node.storage.last_index().await.unwrap();
                     let last_storage_state = node.storage.get_state(last_index).await.unwrap();
@@ -788,10 +811,11 @@ mod tests {
         mod reject_on_no_match_storage_state {
             use super::*;
 
-            async fn new_node() -> Node<MemStorage<usize>, usize> {
+            async fn new_node() -> Node<MemState, MemStorage<usize>, usize> {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state
@@ -937,10 +961,11 @@ mod tests {
         mod equal_term {
             use super::*;
 
-            async fn init_node() -> Node<MemStorage<usize>, usize> {
+            async fn init_node() -> Node<MemState, MemStorage<usize>, usize> {
                 let (_tx, rx) = mpsc::channel(1);
+                let mem_state = MemState::default();
                 let mem_storage = MemStorage::<usize>::default();
-                let node = Node::new(1, rx, mem_storage);
+                let node = Node::new(1, rx, mem_state, mem_storage);
 
                 {
                     node.state.set_term(2_u64).await.unwrap();
@@ -971,7 +996,9 @@ mod tests {
 
                 const ENTRY: [usize; 2] = [1, 2];
 
-                async fn send_msg(node: &Node<MemStorage<usize>, usize>) -> MsgAppendEntriesRes {
+                async fn send_msg(
+                    node: &Node<MemState, MemStorage<usize>, usize>,
+                ) -> MsgAppendEntriesRes {
                     let last_storage_state = {
                         let last_index = node.storage.last_index().await.unwrap();
                         let last_storage_state = node.storage.get_state(last_index).await.unwrap();
@@ -1037,7 +1064,9 @@ mod tests {
 
                 const ENTRY: [usize; 2] = [1, 2];
 
-                async fn send_msg(node: &Node<MemStorage<usize>, usize>) -> MsgAppendEntriesRes {
+                async fn send_msg(
+                    node: &Node<MemState, MemStorage<usize>, usize>,
+                ) -> MsgAppendEntriesRes {
                     let last_storage_state = {
                         let last_index = node.storage.last_index().await.unwrap();
                         let last_storage_state =
