@@ -163,6 +163,10 @@ where
 
                 self.storage.push(value).await.unwrap();
             }
+
+            self.storage
+                .set_commited_index(msg.commited_index.min(self.storage.last_index().await?))
+                .await?;
         }
 
         Ok(MsgAppendEntriesRes {
@@ -1195,6 +1199,36 @@ mod tests {
                     .unwrap();
 
                 assert_eq!(node.state.get_vote_for().await.unwrap(), None);
+            }
+
+            #[tokio::test]
+            async fn update_commited_index() {
+                let node = init_node().await;
+
+                {
+                    node.storage.set_commited_index(0_u64).await.unwrap();
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index - 1).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgAppendEntriesReq {
+                    term: node.state.get_term().await.unwrap(),
+                    commited_index: 1,
+                    entries: vec![1, 2, 3],
+                    prev_storage_state: last_storage_state,
+                };
+                let _msg_res = node
+                    .handle_append_entries(node.id + 1, msg_req)
+                    .await
+                    .unwrap();
+
+                let commited_index = node.storage.get_commited_index().await.unwrap();
+
+                assert_eq!(commited_index, 1);
             }
         }
     }
