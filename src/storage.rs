@@ -41,6 +41,12 @@ where
             term: value.term,
         })
     }
+
+    async fn set_commited_index<I: Into<u64> + Send>(
+        &self,
+        commited_index: I,
+    ) -> Result<(), StorageError>;
+    async fn get_commited_index(&self) -> Result<u64, StorageError>;
 }
 
 #[derive(Default)]
@@ -49,6 +55,7 @@ where
     E: Clone + Send + Sync + PartialEq + Debug,
 {
     vector: Vec<StorageValue<E>>,
+    commited_index: u64,
 }
 
 #[derive(Default)]
@@ -100,6 +107,22 @@ where
 
     async fn last_index(&self) -> Result<u64, StorageError> {
         Ok(self.inner.read().await.vector.len() as u64)
+    }
+
+    async fn set_commited_index<I: Into<u64> + Send>(
+        &self,
+        commited_index: I,
+    ) -> Result<(), StorageError> {
+        let mut storage = self.inner.write().await;
+        storage.commited_index = commited_index.into();
+
+        Ok(())
+    }
+
+    async fn get_commited_index(&self) -> Result<u64, StorageError> {
+        let commited_index = self.inner.read().await.commited_index;
+
+        Ok(commited_index)
     }
 }
 
