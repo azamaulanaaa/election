@@ -118,14 +118,13 @@ where
         let success = self.state.get_term().await? == msg.term;
         if success {
             self.state.set_leader_id(Some(from)).await?;
+            self.state.set_vote_for(None).await?;
         }
 
         let storage_state = self.storage.get_state(msg.prev_storage_state.index).await;
         let success = success && storage_state.is_ok_and(|v| v == msg.prev_storage_state);
 
         if success {
-            self.state.set_vote_for(None).await?;
-
             let mut entries = msg.entries.into_iter().enumerate();
             let mut truncated = false;
             while let Some((offset, entry)) = entries.next() {
@@ -1155,6 +1154,34 @@ mod tests {
                     node.state.get_leader_id().await.unwrap(),
                     Some(new_leader_id)
                 );
+            }
+
+            #[tokio::test]
+            async fn set_vote_for_to_empty() {
+                let node = init_node().await;
+
+                {
+                    node.state.set_vote_for(Some(node.id)).await.unwrap();
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index - 1).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgAppendEntriesReq {
+                    term: node.state.get_term().await.unwrap(),
+                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    entries: Vec::new(),
+                    prev_storage_state: last_storage_state,
+                };
+                let _msg_res = node
+                    .handle_append_entries(node.id + 1, msg_req)
+                    .await
+                    .unwrap();
+
+                assert_eq!(node.state.get_vote_for().await.unwrap(), None);
             }
         }
     }
