@@ -749,6 +749,46 @@ mod tests {
 
                 assert_eq!(node.state.get_vote_for().await.unwrap(), None);
             }
+
+            #[tokio::test]
+            async fn update_commited_index() {
+                let node = init_node().await;
+                {
+                    node.state.set_term(3_u64).await.unwrap();
+                }
+
+                {
+                    node.storage.set_commited_index(0_u64).await.unwrap();
+                    node.storage
+                        .push(StorageValue {
+                            term: node.state.get_term().await.unwrap(),
+                            entry: 0,
+                        })
+                        .await
+                        .unwrap();
+                }
+
+                let last_storage_state = {
+                    let last_index = node.storage.last_index().await.unwrap();
+                    let last_storage_state = node.storage.get_state(last_index - 1).await.unwrap();
+                    last_storage_state
+                };
+
+                let msg_req = MsgAppendEntriesReq {
+                    term: node.state.get_term().await.unwrap() + 1,
+                    commited_index: 1,
+                    entries: vec![1, 2, 3],
+                    prev_storage_state: last_storage_state,
+                };
+                let _msg_res = node
+                    .handle_append_entries(node.id + 1, msg_req)
+                    .await
+                    .unwrap();
+
+                let commited_index = node.storage.get_commited_index().await.unwrap();
+
+                assert_eq!(commited_index, 1);
+            }
         }
 
         mod lower_term {
