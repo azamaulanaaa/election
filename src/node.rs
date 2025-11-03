@@ -7,6 +7,7 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
+    state::{MemState, State, StateError},
     storage::{Storage, StorageError, StorageValue},
 };
 
@@ -14,14 +15,8 @@ use crate::{
 pub enum NodeError {
     #[error("{0}")]
     Storage(#[from] StorageError),
-}
-
-#[derive(Default, Clone, Copy, PartialEq, Debug)]
-pub struct NodeState {
-    pub vote_for: Option<u64>,
-    pub term: u64,
-    pub commited_index: u64,
-    pub leader_id: Option<u64>,
+    #[error("{0}")]
+    State(#[from] StateError),
 }
 
 pub struct Node<S, E>
@@ -32,7 +27,7 @@ where
     id: u64,
     rx: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
-    state: Mutex<NodeState>,
+    state: MemState,
 }
 
 impl<S, E> Node<S, E>
@@ -71,9 +66,9 @@ where
 
     pub async fn is_leader(&self) -> bool {
         self.state
-            .lock()
+            .get_leader_id()
             .await
-            .leader_id
+            .unwrap()
             .is_some_and(|id| id == self.id)
     }
 
@@ -81,29 +76,30 @@ where
         &self,
         msg: MsgRequestVoteReq,
     ) -> Result<MsgRequestVoteRes, NodeError> {
-        let mut node_state = self.state.lock().await;
         let last_index = self.storage.last_index().await.unwrap();
         let last_storage_state = self.storage.get_state(last_index).await?;
 
-        let granted = match Ord::cmp(&msg.term, &node_state.term) {
+        let granted = match Ord::cmp(&msg.term, &self.state.get_term().await?) {
             Ordering::Greater => true,
             Ordering::Less => false,
-            Ordering::Equal => node_state
-                .vote_for
+            Ordering::Equal => self
+                .state
+                .get_vote_for()
+                .await?
                 .is_none_or(|vote_for| vote_for == msg.candidate_id),
         };
         let granted = granted && msg.last_storage_state >= last_storage_state;
         if granted {
-            node_state.vote_for = Some(msg.candidate_id);
+            self.state.set_vote_for(Some(msg.candidate_id)).await?;
         }
 
-        if node_state.term < msg.term {
-            node_state.term = msg.term;
-            node_state.leader_id = None;
+        if self.state.get_term().await? < msg.term {
+            self.state.set_term(msg.term).await?;
+            self.state.set_leader_id(None).await?;
         }
 
         Ok(MsgRequestVoteRes {
-            term: node_state.term,
+            term: self.state.get_term().await?,
             granted,
         })
     }
@@ -113,27 +109,27 @@ where
         from: u64,
         msg: MsgAppendEntriesReq<E>,
     ) -> Result<MsgAppendEntriesRes, NodeError> {
-        let mut node_state = self.state.lock().await;
-
-        if node_state.term < msg.term {
-            node_state.leader_id = Some(from);
+        if self.state.get_term().await? < msg.term {
+            self.state.set_leader_id(Some(from)).await?;
         }
-        node_state.term = node_state.term.max(msg.term);
+        self.state
+            .set_term(self.state.get_term().await?.max(msg.term))
+            .await?;
 
-        let success = node_state.term == msg.term;
+        let success = self.state.get_term().await? == msg.term;
 
         let storage_state = self.storage.get_state(msg.prev_storage_state.index).await;
         let success = success && storage_state.is_ok_and(|v| v == msg.prev_storage_state);
 
         if success {
-            node_state.vote_for = None;
+            self.state.set_vote_for(None).await?;
 
             let mut entries = msg.entries.into_iter().enumerate();
             let mut truncated = false;
             while let Some((offset, entry)) = entries.next() {
                 let current_index = (offset + 1) as u64 + msg.prev_storage_state.index;
                 let value = StorageValue {
-                    term: node_state.term,
+                    term: self.state.get_term().await?,
                     entry,
                 };
 
@@ -152,7 +148,7 @@ where
         }
 
         Ok(MsgAppendEntriesRes {
-            term: node_state.term,
+            term: self.state.get_term().await?,
             success,
         })
     }
@@ -205,13 +201,13 @@ mod tests {
             let last_storage_state = node.storage.get_state(last_index).await.unwrap();
 
             let msg_req = MsgRequestVoteReq {
-                term: { node.state.lock().await.term } + 1,
+                term: node.state.get_term().await.unwrap() + 1,
                 candidate_id: node.id + 1,
                 last_storage_state,
             };
             let _msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
 
-            assert_eq!(node.state.lock().await.term, msg_req.term);
+            assert_eq!(node.state.get_term().await.unwrap(), msg_req.term);
         }
 
         #[tokio::test]
@@ -224,13 +220,13 @@ mod tests {
             let last_storage_state = node.storage.get_state(last_index).await.unwrap();
 
             let msg_req = MsgRequestVoteReq {
-                term: { node.state.lock().await.term },
+                term: node.state.get_term().await.unwrap(),
                 candidate_id: node.id + 1,
                 last_storage_state,
             };
             let _msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
 
-            assert_eq!(node.state.lock().await.term, msg_req.term);
+            assert_eq!(node.state.get_term().await.unwrap(), msg_req.term);
         }
 
         mod no_grant_if_last_storage_state_is_behind {
@@ -242,14 +238,11 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                {
-                    let mut node_state = node.state.lock().await;
-                    node_state.term = 4;
-                }
+                node.state.set_term(4_u64).await.unwrap();
                 {
                     node.storage
                         .push(StorageValue {
-                            term: { node.state.lock().await.term },
+                            term: node.state.get_term().await.unwrap(),
                             entry: 0,
                         })
                         .await
@@ -263,7 +256,7 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term },
+                    term: node.state.get_term().await.unwrap(),
                     candidate_id: node.id + 1,
                     last_storage_state: StorageState {
                         term: last_storage_state.term - 1,
@@ -280,15 +273,12 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                {
-                    let mut node_state = node.state.lock().await;
-                    node_state.term = 4;
-                }
+                node.state.set_term(4_u64).await.unwrap();
                 {
                     for _ in 0..=2 {
                         node.storage
                             .push(StorageValue {
-                                term: { node.state.lock().await.term },
+                                term: node.state.get_term().await.unwrap(),
                                 entry: 0,
                             })
                             .await
@@ -303,7 +293,7 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term },
+                    term: node.state.get_term().await.unwrap(),
                     candidate_id: node.id + 1,
                     last_storage_state: StorageState {
                         index: last_storage_state.index - 1,
@@ -324,22 +314,19 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                {
-                    let mut node_state = node.state.lock().await;
-                    node_state.leader_id = Some(node.id);
-                }
+                node.state.set_leader_id(Some(node.id)).await.unwrap();
 
                 let last_index = node.storage.last_index().await.unwrap();
                 let last_storage_state = node.storage.get_state(last_index).await.unwrap();
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term } + 1,
+                    term: node.state.get_term().await.unwrap() + 1,
                     candidate_id: node.id + 1,
                     last_storage_state: last_storage_state.clone(),
                 };
                 let _msg_res = node.handle_request_vote(msg_req).await;
 
-                assert_ne!(node.state.lock().await.leader_id, Some(node.id));
+                assert_ne!(node.state.get_leader_id().await.unwrap(), Some(node.id));
             }
 
             #[tokio::test]
@@ -348,10 +335,7 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = None;
-                }
+                node.state.set_vote_for(None).await.unwrap();
 
                 let last_storage_state = {
                     let last_index = node.storage.last_index().await.unwrap();
@@ -360,7 +344,7 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term } + 1,
+                    term: node.state.get_term().await.unwrap() + 1,
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
@@ -375,10 +359,7 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = None;
-                }
+                node.state.set_vote_for(None).await.unwrap();
 
                 let last_storage_state = {
                     let last_index = node.storage.last_index().await.unwrap();
@@ -387,13 +368,16 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term } + 1,
+                    term: node.state.get_term().await.unwrap() + 1,
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
                 let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
 
-                assert_eq!(node.state.lock().await.vote_for, Some(msg_req.candidate_id));
+                assert_eq!(
+                    node.state.get_vote_for().await.unwrap(),
+                    Some(msg_req.candidate_id)
+                );
             }
         }
 
@@ -407,9 +391,11 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = None;
-                    node_state.term = node_state.term + 1;
+                    node.state.set_vote_for(None).await.unwrap();
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
                 }
 
                 let last_storage_state = {
@@ -419,7 +405,7 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term } - 1,
+                    term: node.state.get_term().await.unwrap() - 1,
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
@@ -434,12 +420,20 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                let init_node_state = {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = None;
-                    node_state.term = node_state.term + 1;
-                    node_state.clone()
-                };
+                {
+                    node.state.set_vote_for(None).await.unwrap();
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
+                }
+
+                let init_state = (
+                    node.state.get_term().await.unwrap(),
+                    node.state.get_leader_id().await.unwrap(),
+                    node.state.get_vote_for().await.unwrap(),
+                    node.state.get_commited_index().await.unwrap(),
+                );
 
                 let last_storage_state = {
                     let last_index = node.storage.last_index().await.unwrap();
@@ -448,13 +442,19 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term } - 1,
+                    term: node.state.get_term().await.unwrap() - 1,
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
                 let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let state = (
+                    node.state.get_term().await.unwrap(),
+                    node.state.get_leader_id().await.unwrap(),
+                    node.state.get_vote_for().await.unwrap(),
+                    node.state.get_commited_index().await.unwrap(),
+                );
 
-                assert_eq!(node.state.lock().await.clone(), init_node_state);
+                assert_eq!(state, init_state);
             }
         }
 
@@ -468,9 +468,11 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = None;
-                    node_state.term = node_state.term + 1;
+                    node.state.set_vote_for(None).await.unwrap();
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
                 };
 
                 let last_storage_state = {
@@ -480,7 +482,7 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term },
+                    term: node.state.get_term().await.unwrap(),
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
@@ -496,9 +498,11 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = Some(node.id + 1);
-                    node_state.term = node_state.term + 1;
+                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
                 };
 
                 let last_storage_state = {
@@ -508,8 +512,8 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term },
-                    candidate_id: { node.state.lock().await.vote_for.unwrap() },
+                    term: node.state.get_term().await.unwrap(),
+                    candidate_id: node.state.get_vote_for().await.unwrap().unwrap(),
                     last_storage_state,
                 };
                 let msg_res = node.handle_request_vote(msg_req).await.unwrap();
@@ -524,9 +528,11 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = Some(node.id + 1);
-                    node_state.term = node_state.term + 1;
+                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
                 };
 
                 let last_storage_state = {
@@ -536,8 +542,8 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term },
-                    candidate_id: { node.state.lock().await.vote_for.unwrap() } + 1,
+                    term: node.state.get_term().await.unwrap(),
+                    candidate_id: node.state.get_vote_for().await.unwrap().unwrap() + 1,
                     last_storage_state,
                 };
                 let msg_res = node.handle_request_vote(msg_req).await.unwrap();
@@ -552,9 +558,11 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = None;
-                    node_state.term = node_state.term + 1;
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
+                    node.state.set_vote_for(None).await.unwrap();
                 };
 
                 let last_storage_state = {
@@ -564,13 +572,16 @@ mod tests {
                 };
 
                 let msg_req = MsgRequestVoteReq {
-                    term: { node.state.lock().await.term },
+                    term: node.state.get_term().await.unwrap(),
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
                 let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
 
-                assert_eq!(node.state.lock().await.vote_for, Some(msg_req.candidate_id));
+                assert_eq!(
+                    node.state.get_vote_for().await.unwrap(),
+                    Some(msg_req.candidate_id)
+                );
             }
         }
     }
@@ -595,9 +606,9 @@ mod tests {
             };
 
             let msg_req = MsgAppendEntriesReq {
-                term: { node.state.lock().await.term } + 1,
+                term: node.state.get_term().await.unwrap() + 1,
                 prev_storage_state: last_storage_state,
-                commited_index: { node.state.lock().await.commited_index },
+                commited_index: node.state.get_commited_index().await.unwrap(),
                 entries: Vec::new(),
             };
             let _msg_res = node
@@ -605,7 +616,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(node.state.lock().await.term, msg_req.term);
+            assert_eq!(node.state.get_term().await.unwrap(), msg_req.term);
         }
 
         #[tokio::test]
@@ -621,9 +632,9 @@ mod tests {
             };
 
             let msg_req = MsgAppendEntriesReq {
-                term: { node.state.lock().await.term },
+                term: node.state.get_term().await.unwrap(),
                 prev_storage_state: last_storage_state,
-                commited_index: { node.state.lock().await.commited_index },
+                commited_index: node.state.get_commited_index().await.unwrap(),
                 entries: Vec::new(),
             };
             let msg_res = node
@@ -631,7 +642,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(msg_res.term, node.state.lock().await.term);
+            assert_eq!(msg_res.term, node.state.get_term().await.unwrap());
         }
 
         mod higher_term {
@@ -644,8 +655,7 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.leader_id = Some(node.id + 1);
+                    node.state.set_leader_id(node.id + 1).await.unwrap();
                 }
 
                 let last_storage_state = {
@@ -654,16 +664,19 @@ mod tests {
                     last_storage_state
                 };
 
-                let new_leader_id = { node.state.lock().await.leader_id.unwrap() } + 1;
+                let new_leader_id = node.state.get_leader_id().await.unwrap().unwrap() + 1;
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term } + 1,
+                    term: node.state.get_term().await.unwrap() + 1,
                     prev_storage_state: last_storage_state,
                     entries: Vec::new(),
-                    commited_index: { node.state.lock().await.term },
+                    commited_index: node.state.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
 
-                assert_eq!(node.state.lock().await.leader_id, Some(new_leader_id))
+                assert_eq!(
+                    node.state.get_leader_id().await.unwrap(),
+                    Some(new_leader_id)
+                )
             }
 
             #[tokio::test]
@@ -673,8 +686,7 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.vote_for = Some(node.id);
+                    node.state.set_vote_for(Some(node.id)).await.unwrap();
                 }
 
                 let last_storage_state = {
@@ -684,17 +696,17 @@ mod tests {
                 };
 
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term } + 1,
+                    term: node.state.get_term().await.unwrap() + 1,
                     prev_storage_state: last_storage_state,
                     entries: Vec::new(),
-                    commited_index: { node.state.lock().await.term },
+                    commited_index: node.state.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node
                     .handle_append_entries(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
-                assert_eq!(node.state.lock().await.vote_for, None);
+                assert_eq!(node.state.get_vote_for().await.unwrap(), None);
             }
         }
 
@@ -706,10 +718,10 @@ mod tests {
                 let mem_storage = MemStorage::<usize>::default();
                 let node = Node::new(1, rx, mem_storage);
 
-                {
-                    let mut node_state = node.state.lock().await;
-                    node_state.term = node_state.term + 1;
-                }
+                node.state
+                    .set_term(node.state.get_term().await.unwrap() + 1)
+                    .await
+                    .unwrap();
 
                 node
             }
@@ -722,10 +734,10 @@ mod tests {
                 };
 
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term } - 1,
+                    term: node.state.get_term().await.unwrap() - 1,
                     prev_storage_state: last_storage_state,
                     entries: Vec::new(),
-                    commited_index: { node.state.lock().await.term },
+                    commited_index: node.state.get_commited_index().await.unwrap(),
                 };
                 let msg_res = node
                     .handle_append_entries(node.id + 1, msg_req)
@@ -746,10 +758,22 @@ mod tests {
             #[tokio::test]
             async fn no_change_state() {
                 let node = new_node().await;
-                let init_node_state = { node.state.lock().await.clone() };
+                let init_state = (
+                    node.state.get_term().await.unwrap(),
+                    node.state.get_leader_id().await.unwrap(),
+                    node.state.get_vote_for().await.unwrap(),
+                    node.state.get_commited_index().await.unwrap(),
+                );
                 let _msg_res = send_msg(&node).await;
 
-                assert_eq!(node.state.lock().await.clone(), init_node_state);
+                let state = (
+                    node.state.get_term().await.unwrap(),
+                    node.state.get_leader_id().await.unwrap(),
+                    node.state.get_vote_for().await.unwrap(),
+                    node.state.get_commited_index().await.unwrap(),
+                );
+
+                assert_eq!(state, init_state);
             }
 
             #[tokio::test]
@@ -770,22 +794,24 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.term = node_state.term + 1;
-                    node_state.leader_id = Some(node.id + 1);
+                    node.state
+                        .set_term(node.state.get_term().await.unwrap() + 1)
+                        .await
+                        .unwrap();
+                    node.state.set_leader_id(Some(node.id + 1)).await.unwrap();
                 }
 
                 {
                     node.storage
                         .push(StorageValue {
-                            term: { node.state.lock().await.term } - 1,
+                            term: node.state.get_term().await.unwrap() - 1,
                             entry: 2,
                         })
                         .await
                         .unwrap();
                     node.storage
                         .push(StorageValue {
-                            term: { node.state.lock().await.term },
+                            term: node.state.get_term().await.unwrap(),
                             entry: 0,
                         })
                         .await
@@ -805,10 +831,10 @@ mod tests {
                     last_storage_state
                 };
 
-                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term },
-                    commited_index: { node.state.lock().await.commited_index },
+                    term: node.state.get_term().await.unwrap(),
+                    commited_index: node.state.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         term: last_storage_state.term + 1,
@@ -833,10 +859,10 @@ mod tests {
                     last_storage_state
                 };
 
-                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term },
-                    commited_index: { node.state.lock().await.commited_index },
+                    commited_index: node.state.get_commited_index().await.unwrap(),
+                    term: node.state.get_term().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         term: last_storage_state.term - 1,
@@ -861,10 +887,10 @@ mod tests {
                     last_storage_state
                 };
 
-                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term },
-                    commited_index: { node.state.lock().await.commited_index },
+                    term: node.state.get_term().await.unwrap(),
+                    commited_index: node.state.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         index: last_storage_state.index + 1,
@@ -889,10 +915,10 @@ mod tests {
                     last_storage_state
                 };
 
-                let leader_id = { node.state.lock().await.leader_id.unwrap() };
+                let leader_id = node.state.get_leader_id().await.unwrap().unwrap();
                 let msg_req = MsgAppendEntriesReq {
-                    term: { node.state.lock().await.term },
-                    commited_index: { node.state.lock().await.commited_index },
+                    term: node.state.get_term().await.unwrap(),
+                    commited_index: node.state.get_commited_index().await.unwrap(),
                     entries: Vec::new(),
                     prev_storage_state: StorageState {
                         index: last_storage_state.index - 1,
@@ -917,21 +943,20 @@ mod tests {
                 let node = Node::new(1, rx, mem_storage);
 
                 {
-                    let mut node_state = node.state.lock().await;
-                    node_state.term = 2;
+                    node.state.set_term(2_u64).await.unwrap();
                 }
 
                 {
                     node.storage
                         .push(StorageValue {
-                            term: { node.state.lock().await.term } - 1,
+                            term: node.state.get_term().await.unwrap() - 1,
                             entry: 0,
                         })
                         .await
                         .unwrap();
                     node.storage
                         .push(StorageValue {
-                            term: { node.state.lock().await.term },
+                            term: node.state.get_term().await.unwrap(),
                             entry: 0,
                         })
                         .await
@@ -954,8 +979,8 @@ mod tests {
                     };
 
                     let msg_req = MsgAppendEntriesReq {
-                        term: { node.state.lock().await.term },
-                        commited_index: { node.state.lock().await.commited_index },
+                        term: node.state.get_term().await.unwrap(),
+                        commited_index: node.state.get_commited_index().await.unwrap(),
                         entries: Vec::from(ENTRY),
                         prev_storage_state: last_storage_state,
                     };
@@ -1021,8 +1046,8 @@ mod tests {
                     };
 
                     let msg_req = MsgAppendEntriesReq {
-                        term: { node.state.lock().await.term },
-                        commited_index: { node.state.lock().await.commited_index },
+                        term: node.state.get_term().await.unwrap(),
+                        commited_index: node.state.get_commited_index().await.unwrap(),
                         entries: Vec::from(ENTRY),
                         prev_storage_state: last_storage_state,
                     };
