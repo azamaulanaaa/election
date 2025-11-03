@@ -78,8 +78,20 @@ where
         &self,
         msg: MsgRequestVoteReq,
     ) -> Result<MsgRequestVoteRes, NodeError> {
-        let last_index = self.storage.last_index().await.unwrap();
-        let last_storage_state = self.storage.get_state(last_index).await?;
+        self.state
+            .set_term(self.state.get_term().await?.max(msg.term))
+            .await
+            .unwrap();
+
+        if self.state.get_term().await? == msg.term {
+            self.state.set_leader_id(None).await?;
+        }
+
+        let last_storage_state = {
+            let last_index = self.storage.last_index().await.unwrap();
+            let last_storage_state = self.storage.get_state(last_index).await?;
+            last_storage_state
+        };
 
         let granted = match Ord::cmp(&msg.term, &self.state.get_term().await?) {
             Ordering::Greater => true,
@@ -93,11 +105,6 @@ where
         let granted = granted && msg.last_storage_state >= last_storage_state;
         if granted {
             self.state.set_vote_for(Some(msg.candidate_id)).await?;
-        }
-
-        if self.state.get_term().await? < msg.term {
-            self.state.set_term(msg.term).await?;
-            self.state.set_leader_id(None).await?;
         }
 
         Ok(MsgRequestVoteRes {
