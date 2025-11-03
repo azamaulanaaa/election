@@ -74,6 +74,13 @@ where
             .is_some_and(|id| id == self.id)
     }
 
+    async fn start_election(&self) {
+        self.state
+            .set_term(self.state.get_term().await.unwrap() + 1)
+            .await
+            .unwrap();
+    }
+
     async fn handle_request_vote(
         &self,
         msg: MsgRequestVoteReq,
@@ -1190,6 +1197,53 @@ mod tests {
 
                 assert_eq!(node.state.get_vote_for().await.unwrap(), None);
             }
+        }
+    }
+
+    mod start_election {
+        use super::*;
+
+        async fn init_node() -> Node<MemState, MemStorage<usize>, usize> {
+            let (_tx, rx) = mpsc::channel(1);
+            let mem_state = MemState::default();
+            let mem_storage = MemStorage::<usize>::default();
+            let node = Node::new(1, rx, mem_state, mem_storage);
+
+            {
+                node.state.set_term(2_u64).await.unwrap();
+            }
+
+            {
+                node.storage
+                    .push(StorageValue {
+                        term: node.state.get_term().await.unwrap() - 1,
+                        entry: 0,
+                    })
+                    .await
+                    .unwrap();
+                node.storage
+                    .push(StorageValue {
+                        term: node.state.get_term().await.unwrap(),
+                        entry: 0,
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            node
+        }
+
+        #[tokio::test]
+        async fn increase_current_term() {
+            let node = init_node().await;
+
+            let init_term = node.state.get_term().await.unwrap();
+
+            node.start_election().await;
+
+            let term = node.state.get_term().await.unwrap();
+
+            assert_eq!(term, init_term + 1);
         }
     }
 }
