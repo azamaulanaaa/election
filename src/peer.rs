@@ -18,10 +18,12 @@ pub trait Peers {
     async fn ids(&self) -> Result<HashSet<u64>, PeerError>;
 }
 
+#[derive(Default)]
 struct MemPeersInner {
     map: HashMap<u64, Peer>,
 }
 
+#[derive(Default)]
 pub struct MemPeers {
     inner: RwLock<MemPeersInner>,
 }

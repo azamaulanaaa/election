@@ -7,6 +7,7 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
+    peer::{MemPeers, Peers},
     state::{State, StateError},
     storage::{Storage, StorageError, StorageValue},
 };
@@ -29,6 +30,7 @@ where
     rx: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
     state: T,
+    peers: MemPeers,
 }
 
 impl<T, S, E> Node<T, S, E>
@@ -43,6 +45,7 @@ where
             rx: Mutex::new(rx),
             state,
             storage,
+            peers: MemPeers::default(),
         }
     }
 
