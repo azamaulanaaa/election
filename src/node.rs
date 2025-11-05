@@ -29,7 +29,8 @@ where
     E: Clone + Send + Sync + PartialEq + Debug,
 {
     id: u64,
-    rx: Mutex<mpsc::Receiver<Message<E>>>,
+    tx_out: mpsc::Sender<Message<E>>,
+    rx_in: Mutex<mpsc::Receiver<Message<E>>>,
     storage: S,
     state: T,
     peers: MemPeers,
@@ -41,10 +42,17 @@ where
     S: Storage<E>,
     E: Clone + Send + Sync + PartialEq + Debug,
 {
-    pub fn new(id: u64, rx: mpsc::Receiver<Message<E>>, state: T, storage: S) -> Self {
+    pub fn new(
+        id: u64,
+        tx_out: mpsc::Sender<Message<E>>,
+        rx_in: mpsc::Receiver<Message<E>>,
+        state: T,
+        storage: S,
+    ) -> Self {
         Self {
             id,
-            rx: Mutex::new(rx),
+            tx_out,
+            rx_in: Mutex::new(rx_in),
             state,
             storage,
             peers: MemPeers::default(),
@@ -52,9 +60,9 @@ where
     }
 
     pub async fn run(&self) {
-        let mut rx_guard = self.rx.lock().await;
+        let mut rx_in = self.rx_in.lock().await;
 
-        while let Some(message) = rx_guard.next().await {
+        while let Some(message) = rx_in.next().await {
             match message.body {
                 MessageBody::RequestVote(msg_req, tx_res) => {
                     let msg_res = self.handle_request_vote(msg_req).await.unwrap();
@@ -191,24 +199,26 @@ mod tests {
     use super::*;
 
     async fn init_node(
-        rx: mpsc::Receiver<Message<usize>>,
+        tx_in: mpsc::Sender<Message<usize>>,
+        rx_out: mpsc::Receiver<Message<usize>>,
     ) -> Node<MemState, MemStorage<usize>, usize> {
         let mem_state = MemState::default();
         let mem_storage = MemStorage::<usize>::default();
-        let node = Node::new(1, rx, mem_state, mem_storage);
+        let node = Node::new(1, tx_in, rx_out, mem_state, mem_storage);
 
         node
     }
 
     #[tokio::test]
     async fn stop_run_when_no_sender() {
-        let (tx_req, rx_req) = mpsc::channel(1);
-        let node = init_node(rx_req).await;
+        let (tx_in, rx_in) = mpsc::channel(1);
+        let (tx_out, _rx_out) = mpsc::channel(1);
+        let node = init_node(tx_out, rx_in).await;
 
         let timeout = time::Duration::from_millis(100);
 
         {
-            drop(tx_req);
+            drop(tx_in);
         }
 
         tokio::select! {
@@ -230,8 +240,9 @@ mod tests {
 
         #[tokio::test]
         async fn update_state_term_with_highest_term() {
-            let (_tx_req, rx_req) = mpsc::channel(1);
-            let node = init_node(rx_req).await;
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
 
             let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
@@ -252,8 +263,9 @@ mod tests {
 
         #[tokio::test]
         async fn response_with_state_term() {
-            let (_tx_req, rx_req) = mpsc::channel(1);
-            let node = init_node(rx_req).await;
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
 
             let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
@@ -277,8 +289,9 @@ mod tests {
 
             #[tokio::test]
             async fn term_is_older() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_term(4_u64).await.unwrap();
@@ -314,8 +327,9 @@ mod tests {
 
             #[tokio::test]
             async fn index_is_older() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_term(4_u64).await.unwrap();
@@ -357,8 +371,9 @@ mod tests {
 
             #[tokio::test]
             async fn step_down() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_leader_id(Some(node.id)).await.unwrap();
@@ -383,8 +398,9 @@ mod tests {
 
             #[tokio::test]
             async fn grant() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -408,8 +424,9 @@ mod tests {
 
             #[tokio::test]
             async fn update_vote_for() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -438,8 +455,9 @@ mod tests {
 
             #[tokio::test]
             async fn no_grant() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -467,8 +485,9 @@ mod tests {
 
             #[tokio::test]
             async fn no_change() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -511,8 +530,9 @@ mod tests {
 
             #[tokio::test]
             async fn grant_for_empty_vote_for() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(None).await.unwrap();
@@ -540,8 +560,9 @@ mod tests {
 
             #[tokio::test]
             async fn grant_for_voting_same_candidate() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
@@ -569,8 +590,9 @@ mod tests {
 
             #[tokio::test]
             async fn no_grant_for_voting_different_candidate() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
@@ -598,8 +620,9 @@ mod tests {
 
             #[tokio::test]
             async fn update_vote_for_if_empty_vote_for() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -637,8 +660,9 @@ mod tests {
 
         #[tokio::test]
         async fn update_term_to_highest_term() {
-            let (_tx_req, rx_req) = mpsc::channel(1);
-            let node = init_node(rx_req).await;
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
 
             let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
@@ -663,8 +687,9 @@ mod tests {
 
         #[tokio::test]
         async fn response_with_state_term() {
-            let (_tx_req, rx_req) = mpsc::channel(1);
-            let node = init_node(rx_req).await;
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
 
             let last_storage_state = {
                 let last_index = node.storage.last_index().await.unwrap();
@@ -692,8 +717,9 @@ mod tests {
 
             #[tokio::test]
             async fn update_leader_id() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_leader_id(node.id + 1).await.unwrap();
@@ -720,8 +746,9 @@ mod tests {
 
             #[tokio::test]
             async fn set_vote_for_to_empty() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_vote_for(Some(node.id)).await.unwrap();
@@ -750,8 +777,9 @@ mod tests {
 
             #[tokio::test]
             async fn update_commited_index() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_term(3_u64).await.unwrap();
@@ -795,8 +823,9 @@ mod tests {
 
             #[tokio::test]
             async fn response_success_is_false() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -827,8 +856,9 @@ mod tests {
 
             #[tokio::test]
             async fn no_change_state() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -870,8 +900,9 @@ mod tests {
 
             #[tokio::test]
             async fn no_change_storage() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -907,8 +938,9 @@ mod tests {
 
             #[tokio::test]
             async fn higher_term() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -962,8 +994,9 @@ mod tests {
 
             #[tokio::test]
             async fn lower_term() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -1017,8 +1050,9 @@ mod tests {
 
             #[tokio::test]
             async fn higher_index() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -1072,8 +1106,9 @@ mod tests {
 
             #[tokio::test]
             async fn lower_index() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state
@@ -1136,8 +1171,9 @@ mod tests {
 
                 #[tokio::test]
                 async fn response_success_is_true() {
-                    let (_tx_req, rx_req) = mpsc::channel(1);
-                    let node = init_node(rx_req).await;
+                    let (_tx_in, rx_in) = mpsc::channel(1);
+                    let (tx_out, _rx_out) = mpsc::channel(1);
+                    let node = init_node(tx_out, rx_in).await;
 
                     {
                         node.state.set_term(2_u64).await.unwrap();
@@ -1182,8 +1218,9 @@ mod tests {
 
                 #[tokio::test]
                 async fn match_last_storage_index() {
-                    let (_tx_req, rx_req) = mpsc::channel(1);
-                    let node = init_node(rx_req).await;
+                    let (_tx_in, rx_in) = mpsc::channel(1);
+                    let (tx_out, _rx_out) = mpsc::channel(1);
+                    let node = init_node(tx_out, rx_in).await;
 
                     {
                         node.state.set_term(2_u64).await.unwrap();
@@ -1229,8 +1266,9 @@ mod tests {
 
                 #[tokio::test]
                 async fn match_storage_entity() {
-                    let (_tx_req, rx_req) = mpsc::channel(1);
-                    let node = init_node(rx_req).await;
+                    let (_tx_in, rx_in) = mpsc::channel(1);
+                    let (tx_out, _rx_out) = mpsc::channel(1);
+                    let node = init_node(tx_out, rx_in).await;
 
                     {
                         node.state.set_term(2_u64).await.unwrap();
@@ -1284,8 +1322,9 @@ mod tests {
 
                 #[tokio::test]
                 async fn response_success_is_true() {
-                    let (_tx_req, rx_req) = mpsc::channel(1);
-                    let node = init_node(rx_req).await;
+                    let (_tx_in, rx_in) = mpsc::channel(1);
+                    let (tx_out, _rx_out) = mpsc::channel(1);
+                    let node = init_node(tx_out, rx_in).await;
 
                     {
                         node.state.set_term(2_u64).await.unwrap();
@@ -1331,8 +1370,9 @@ mod tests {
 
                 #[tokio::test]
                 async fn match_last_storage_index() {
-                    let (_tx_req, rx_req) = mpsc::channel(1);
-                    let node = init_node(rx_req).await;
+                    let (_tx_in, rx_in) = mpsc::channel(1);
+                    let (tx_out, _rx_out) = mpsc::channel(1);
+                    let node = init_node(tx_out, rx_in).await;
 
                     {
                         node.state.set_term(2_u64).await.unwrap();
@@ -1378,8 +1418,9 @@ mod tests {
 
                 #[tokio::test]
                 async fn match_storage_entity() {
-                    let (_tx_req, rx_req) = mpsc::channel(1);
-                    let node = init_node(rx_req).await;
+                    let (_tx_in, rx_in) = mpsc::channel(1);
+                    let (tx_out, _rx_out) = mpsc::channel(1);
+                    let node = init_node(tx_out, rx_in).await;
 
                     {
                         node.state.set_term(2_u64).await.unwrap();
@@ -1426,8 +1467,9 @@ mod tests {
 
             #[tokio::test]
             async fn update_leader_id() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_term(2_u64).await.unwrap();
@@ -1476,8 +1518,9 @@ mod tests {
 
             #[tokio::test]
             async fn set_vote_for_to_empty() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_term(2_u64).await.unwrap();
@@ -1524,8 +1567,9 @@ mod tests {
 
             #[tokio::test]
             async fn update_commited_index() {
-                let (_tx_req, rx_req) = mpsc::channel(1);
-                let node = init_node(rx_req).await;
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
 
                 {
                     node.state.set_term(2_u64).await.unwrap();
@@ -1577,8 +1621,9 @@ mod tests {
 
         #[tokio::test]
         async fn increase_current_term() {
-            let (_tx_req, rx_req) = mpsc::channel(1);
-            let node = init_node(rx_req).await;
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
 
             {
                 node.state.set_term(2_u64).await.unwrap();
@@ -1611,8 +1656,9 @@ mod tests {
 
         #[tokio::test]
         async fn vote_for_self_if_empty() {
-            let (_tx_req, rx_req) = mpsc::channel(1);
-            let node = init_node(rx_req).await;
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
 
             {
                 node.state.set_term(2_u64).await.unwrap();
