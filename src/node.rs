@@ -165,6 +165,10 @@ where
         })
     }
 
+    async fn handle_request_vote_res(&self, msg: MsgAppendEntriesRes) -> Result<(), NodeError> {
+        Ok(())
+    }
+
     async fn handle_append_entries_req(
         &self,
         from: u64,
