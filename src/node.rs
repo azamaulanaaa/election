@@ -1,6 +1,10 @@
 use std::{cmp::Ordering, fmt::Debug};
 
-use futures::{StreamExt, channel::mpsc, lock::Mutex};
+use futures::{
+    SinkExt, StreamExt,
+    channel::{mpsc, oneshot},
+    lock::Mutex,
+};
 
 use crate::{
     message::{
@@ -91,8 +95,33 @@ where
         self.state
             .set_term(self.state.get_term().await? + 1)
             .await?;
-        let vote_for = self.state.get_vote_for().await?.unwrap_or(self.id);
-        self.state.set_vote_for(Some(vote_for)).await?;
+
+        let candidate_id = self.state.get_vote_for().await?.unwrap_or(self.id);
+        self.state.set_vote_for(Some(candidate_id)).await?;
+
+        let last_storage_state = {
+            let last_index = self.storage.last_index().await?;
+            let last_storage_state = self.storage.get_state(last_index).await?;
+            last_storage_state
+        };
+
+        let msg_req = MsgRequestVoteReq {
+            term: self.state.get_term().await?,
+            candidate_id,
+            last_storage_state,
+        };
+
+        let receiver_ids = self.peers.ids().await?.into_iter();
+        for node_id in receiver_ids {
+            let (tx_res, _rx_res) = oneshot::channel();
+            let msg_body = MessageBody::RequestVote(msg_req.clone(), tx_res);
+            let msg = Message {
+                node_id,
+                body: msg_body,
+            };
+
+            self.tx_out.clone().send(msg).await.unwrap();
+        }
 
         Ok(())
     }
@@ -1686,6 +1715,53 @@ mod tests {
 
             let vote_for = node.state.get_vote_for().await.unwrap();
             assert_eq!(vote_for, Some(node.id));
+        }
+
+        mod broadcast_message {
+            use crate::peers::Peer;
+
+            use super::*;
+
+            #[tokio::test]
+            async fn message_is_request_vote() {
+                let n_msgs = 2;
+
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, mut rx_out) = mpsc::channel(n_msgs);
+                let node = init_node(tx_out, rx_in).await;
+
+                let last_index = node.storage.last_index().await.unwrap();
+
+                {
+                    for offset in 0..n_msgs {
+                        let id = node.id + offset as u64;
+                        node.peers.insert(id, Peer { last_index }).await.unwrap();
+                    }
+                }
+
+                node.start_election().await.unwrap();
+
+                let timeout = time::Duration::from_millis(100);
+
+                for i in 0..n_msgs {
+                    tokio::select! {
+                        _ = tokio::time::sleep(timeout) => {
+                            panic!("Test timeout. Received {} of {} messages", i, n_msgs);
+                        }
+                        Some(msg) = rx_out.next() => {
+                            match msg.body {
+                                MessageBody::RequestVote(_msg_req, _tx_res) => {
+                                    continue;
+                                },
+                                _ => {
+                                    panic!("message at {} is not RequestVote", i + 1);
+                                }
+                            }
+                        }
+
+                    }
+                }
+            }
         }
     }
 }
