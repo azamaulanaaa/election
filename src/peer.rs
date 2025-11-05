@@ -55,8 +55,7 @@ impl Peers for MemPeers {
             .read()
             .await
             .map
-            .keys()
-            .map(|k| *k as u64)
+            .keys().copied()
             .collect::<HashSet<_>>();
 
         Ok(ids)

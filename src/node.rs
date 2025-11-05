@@ -102,8 +102,8 @@ where
 
         let last_storage_state = {
             let last_index = self.storage.last_index().await.unwrap();
-            let last_storage_state = self.storage.get_state(last_index).await?;
-            last_storage_state
+            
+            self.storage.get_state(last_index).await?
         };
 
         let granted = match Ord::cmp(&msg.term, &self.state.get_term().await?) {

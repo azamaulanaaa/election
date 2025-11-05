@@ -89,8 +89,7 @@ where
             .await
             .vector
             .get(inner_index as usize)
-            .ok_or(StorageError::OutOfBound { index, size })
-            .map(|value| value.clone())
+            .ok_or(StorageError::OutOfBound { index, size }).cloned()
     }
 
     async fn truncate(&self, index: u64) -> Result<(), StorageError> {
