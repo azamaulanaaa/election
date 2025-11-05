@@ -1655,7 +1655,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn vote_for_self_if_empty() {
+        async fn update_vote_for_self_if_empty() {
             let (_tx_in, rx_in) = mpsc::channel(1);
             let (tx_out, _rx_out) = mpsc::channel(1);
             let node = init_node(tx_out, rx_in).await;
