@@ -145,9 +145,9 @@ where
         let success = success && storage_state.is_ok_and(|v| v == msg.prev_storage_state);
 
         if success {
-            let mut entries = msg.entries.into_iter().enumerate();
+            let entries = msg.entries.into_iter().enumerate();
             let mut truncated = false;
-            while let Some((offset, entry)) = entries.next() {
+            for (offset, entry) in entries {
                 let current_index = (offset + 1) as u64 + msg.prev_storage_state.index;
                 let value = StorageValue {
                     term: self.state.get_term().await?,
