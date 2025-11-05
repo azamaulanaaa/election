@@ -69,12 +69,12 @@ where
         while let Some(message) = rx_in.next().await {
             match message.body {
                 MessageBody::RequestVote(msg_req, tx_res) => {
-                    let msg_res = self.handle_request_vote(msg_req).await.unwrap();
+                    let msg_res = self.handle_request_vote_req(msg_req).await.unwrap();
                     let _ = tx_res.send(msg_res);
                 }
                 MessageBody::AppendEntries(msg_req, tx_res) => {
                     let msg_res = self
-                        .handle_append_entries(message.node_id, msg_req)
+                        .handle_append_entries_req(message.node_id, msg_req)
                         .await
                         .unwrap();
                     let _ = tx_res.send(msg_res);
@@ -126,7 +126,7 @@ where
         Ok(())
     }
 
-    async fn handle_request_vote(
+    async fn handle_request_vote_req(
         &self,
         msg: MsgRequestVoteReq,
     ) -> Result<MsgRequestVoteRes, NodeError> {
@@ -165,7 +165,7 @@ where
         })
     }
 
-    async fn handle_append_entries(
+    async fn handle_append_entries_req(
         &self,
         from: u64,
         msg: MsgAppendEntriesReq<E>,
@@ -284,7 +284,7 @@ mod tests {
                 candidate_id: node.id + 1,
                 last_storage_state,
             };
-            let _msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
+            let _msg_res = node.handle_request_vote_req(msg_req.clone()).await.unwrap();
 
             let term = node.state.get_term().await.unwrap();
             assert_eq!(term, msg_req.term);
@@ -307,7 +307,7 @@ mod tests {
                 candidate_id: node.id + 1,
                 last_storage_state,
             };
-            let msg_res = node.handle_request_vote(msg_req.clone()).await.unwrap();
+            let msg_res = node.handle_request_vote_req(msg_req.clone()).await.unwrap();
 
             let term = node.state.get_term().await.unwrap();
             assert_eq!(term, msg_res.term);
@@ -349,7 +349,7 @@ mod tests {
                         ..last_storage_state
                     },
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, false);
             }
@@ -389,7 +389,7 @@ mod tests {
                         ..last_storage_state
                     },
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, false);
             }
@@ -419,7 +419,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state: last_storage_state.clone(),
                 };
-                let _msg_res = node.handle_request_vote(msg_req).await;
+                let _msg_res = node.handle_request_vote_req(msg_req).await;
 
                 let leader_id = node.state.get_leader_id().await.unwrap();
                 assert_ne!(leader_id, Some(node.id));
@@ -446,7 +446,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, true);
             }
@@ -472,7 +472,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
-                let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let _msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 let vote_for = node.state.get_vote_for().await.unwrap();
                 assert_eq!(vote_for, Some(msg_req.candidate_id));
@@ -507,7 +507,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, false);
             }
@@ -543,7 +543,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
-                let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let _msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 let state = (
                     node.state.get_term().await.unwrap(),
@@ -582,7 +582,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, true);
             }
@@ -612,7 +612,7 @@ mod tests {
                     candidate_id: node.state.get_vote_for().await.unwrap().unwrap(),
                     last_storage_state,
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, true);
             }
@@ -642,7 +642,7 @@ mod tests {
                     candidate_id: node.state.get_vote_for().await.unwrap().unwrap() + 1,
                     last_storage_state,
                 };
-                let msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 assert_eq!(msg_res.granted, false);
             }
@@ -672,7 +672,7 @@ mod tests {
                     candidate_id: node.id + 1,
                     last_storage_state,
                 };
-                let _msg_res = node.handle_request_vote(msg_req).await.unwrap();
+                let _msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 let vote_for = node.state.get_vote_for().await.unwrap();
                 assert_eq!(vote_for, Some(msg_req.candidate_id));
@@ -706,7 +706,7 @@ mod tests {
                 entries: Vec::new(),
             };
             let _msg_res = node
-                .handle_append_entries(node.id + 1, msg_req.clone())
+                .handle_append_entries_req(node.id + 1, msg_req.clone())
                 .await
                 .unwrap();
 
@@ -733,7 +733,7 @@ mod tests {
                 entries: Vec::new(),
             };
             let msg_res = node
-                .handle_append_entries(node.id + 1, msg_req.clone())
+                .handle_append_entries_req(node.id + 1, msg_req.clone())
                 .await
                 .unwrap();
 
@@ -767,7 +767,7 @@ mod tests {
                     entries: Vec::new(),
                     commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
-                let _msg_res = node.handle_append_entries(new_leader_id, msg_req).await;
+                let _msg_res = node.handle_append_entries_req(new_leader_id, msg_req).await;
 
                 let leader_id = node.state.get_leader_id().await.unwrap();
                 assert_eq!(leader_id, Some(new_leader_id))
@@ -796,7 +796,7 @@ mod tests {
                     commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
@@ -838,7 +838,7 @@ mod tests {
                     prev_storage_state: last_storage_state,
                 };
                 let _msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
@@ -876,7 +876,7 @@ mod tests {
                     commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
@@ -915,7 +915,7 @@ mod tests {
                     commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
@@ -953,7 +953,7 @@ mod tests {
                     commited_index: node.storage.get_commited_index().await.unwrap(),
                 };
                 let _msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
@@ -1014,7 +1014,7 @@ mod tests {
                     },
                 };
                 let msg_res = node
-                    .handle_append_entries(leader_id, msg_req)
+                    .handle_append_entries_req(leader_id, msg_req)
                     .await
                     .unwrap();
 
@@ -1070,7 +1070,7 @@ mod tests {
                     },
                 };
                 let msg_res = node
-                    .handle_append_entries(leader_id, msg_req)
+                    .handle_append_entries_req(leader_id, msg_req)
                     .await
                     .unwrap();
 
@@ -1126,7 +1126,7 @@ mod tests {
                     },
                 };
                 let msg_res = node
-                    .handle_append_entries(leader_id, msg_req)
+                    .handle_append_entries_req(leader_id, msg_req)
                     .await
                     .unwrap();
 
@@ -1182,7 +1182,7 @@ mod tests {
                     },
                 };
                 let msg_res = node
-                    .handle_append_entries(leader_id, msg_req)
+                    .handle_append_entries_req(leader_id, msg_req)
                     .await
                     .unwrap();
 
@@ -1238,7 +1238,7 @@ mod tests {
                         prev_storage_state: last_storage_state,
                     };
                     let msg_res = node
-                        .handle_append_entries(node.id + 1, msg_req)
+                        .handle_append_entries_req(node.id + 1, msg_req)
                         .await
                         .unwrap();
 
@@ -1284,7 +1284,7 @@ mod tests {
                         prev_storage_state: last_storage_state,
                     };
                     let _msg_res = node
-                        .handle_append_entries(node.id + 1, msg_req)
+                        .handle_append_entries_req(node.id + 1, msg_req)
                         .await
                         .unwrap();
 
@@ -1330,7 +1330,7 @@ mod tests {
                         prev_storage_state: last_storage_state,
                     };
                     let _msg_res = node
-                        .handle_append_entries(node.id + 1, msg_req)
+                        .handle_append_entries_req(node.id + 1, msg_req)
                         .await
                         .unwrap();
 
@@ -1390,7 +1390,7 @@ mod tests {
                         prev_storage_state: last_storage_state,
                     };
                     let msg_res = node
-                        .handle_append_entries(node.id + 1, msg_req)
+                        .handle_append_entries_req(node.id + 1, msg_req)
                         .await
                         .unwrap();
 
@@ -1436,7 +1436,7 @@ mod tests {
                         prev_storage_state: last_storage_state,
                     };
                     let _msg_res = node
-                        .handle_append_entries(node.id + 1, msg_req)
+                        .handle_append_entries_req(node.id + 1, msg_req)
                         .await
                         .unwrap();
 
@@ -1482,7 +1482,7 @@ mod tests {
                         prev_storage_state: last_storage_state,
                     };
                     let _msg_res = node
-                        .handle_append_entries(node.id + 1, msg_req)
+                        .handle_append_entries_req(node.id + 1, msg_req)
                         .await
                         .unwrap();
 
@@ -1537,7 +1537,7 @@ mod tests {
                     prev_storage_state: last_storage_state,
                 };
                 let _msg_res = node
-                    .handle_append_entries(new_leader_id, msg_req)
+                    .handle_append_entries_req(new_leader_id, msg_req)
                     .await
                     .unwrap();
 
@@ -1586,7 +1586,7 @@ mod tests {
                     prev_storage_state: last_storage_state,
                 };
                 let _msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
@@ -1635,7 +1635,7 @@ mod tests {
                     prev_storage_state: last_storage_state,
                 };
                 let _msg_res = node
-                    .handle_append_entries(node.id + 1, msg_req)
+                    .handle_append_entries_req(node.id + 1, msg_req)
                     .await
                     .unwrap();
 
