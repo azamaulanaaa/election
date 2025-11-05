@@ -1723,7 +1723,7 @@ mod tests {
             use super::*;
 
             #[tokio::test]
-            async fn message_is_request_vote() {
+            async fn term_is_state_term() {
                 let n_msgs = 2;
 
                 let (_tx_in, rx_in) = mpsc::channel(1);
@@ -1750,8 +1750,10 @@ mod tests {
                         }
                         Some(msg) = rx_out.next() => {
                             match msg.body {
-                                MessageBody::RequestVote(_msg_req, _tx_res) => {
-                                    continue;
+                                MessageBody::RequestVote(msg_req, _tx_res) => {
+                                    let term = node.state.get_term().await.unwrap();
+                                    assert_eq!(msg_req.term, term);
+
                                 },
                                 _ => {
                                     panic!("message at {} is not RequestVote", i + 1);
