@@ -7,7 +7,7 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
-    peers::{MemPeers, Peers},
+    peers::{MemPeers, Peers, PeersError},
     state::{State, StateError},
     storage::{Storage, StorageError, StorageValue},
 };
@@ -18,6 +18,8 @@ pub enum NodeError {
     Storage(#[from] StorageError),
     #[error("{0}")]
     State(#[from] StateError),
+    #[error("{0}")]
+    Peers(#[from] PeersError),
 }
 
 pub struct Node<T, S, E>
