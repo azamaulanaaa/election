@@ -264,7 +264,7 @@ mod tests {
         }
     }
 
-    mod handle_request_vote {
+    mod handle_request_vote_req {
         use futures::channel::mpsc;
 
         use crate::storage::{StorageState, StorageValue};
@@ -684,7 +684,7 @@ mod tests {
         }
     }
 
-    mod handle_append_entries {
+    mod handle_append_entries_req {
         use futures::channel::mpsc;
 
         use crate::storage::{StorageState, StorageValue};
