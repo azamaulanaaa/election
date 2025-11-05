@@ -7,7 +7,7 @@ use crate::{
         Message, MessageBody, MsgAppendEntriesReq, MsgAppendEntriesRes, MsgRequestVoteReq,
         MsgRequestVoteRes,
     },
-    peer::{MemPeers, Peers},
+    peers::{MemPeers, Peers},
     state::{State, StateError},
     storage::{Storage, StorageError, StorageValue},
 };
@@ -102,7 +102,7 @@ where
 
         let last_storage_state = {
             let last_index = self.storage.last_index().await.unwrap();
-            
+
             self.storage.get_state(last_index).await?
         };
 
