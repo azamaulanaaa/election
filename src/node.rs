@@ -1764,6 +1764,53 @@ mod tests {
                     }
                 }
             }
+
+            #[tokio::test]
+            async fn last_storage_state_is_node_last_storage_state() {
+                let n_msgs = 2;
+
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, mut rx_out) = mpsc::channel(n_msgs);
+                let node = init_node(tx_out, rx_in).await;
+
+                let last_index = node.storage.last_index().await.unwrap();
+
+                {
+                    for offset in 0..n_msgs {
+                        let id = node.id + offset as u64;
+                        node.peers.insert(id, Peer { last_index }).await.unwrap();
+                    }
+                }
+
+                node.start_election().await.unwrap();
+
+                let timeout = time::Duration::from_millis(100);
+
+                for i in 0..n_msgs {
+                    tokio::select! {
+                        _ = tokio::time::sleep(timeout) => {
+                            panic!("Test timeout. Received {} of {} messages", i, n_msgs);
+                        }
+                        Some(msg) = rx_out.next() => {
+                            match msg.body {
+                                MessageBody::RequestVote(msg_req, _tx_res) => {
+                                    let last_storage_state = {
+                                        let last_index = node.storage.last_index().await.unwrap();
+                                        let last_storage_state = node.storage.get_state(last_index).await.unwrap();
+                                        last_storage_state
+                                    };
+                                    assert_eq!(msg_req.last_storage_state, last_storage_state);
+
+                                },
+                                _ => {
+                                    panic!("message at {} is not RequestVote", i + 1);
+                                }
+                            }
+                        }
+
+                    }
+                }
+            }
         }
     }
 }
