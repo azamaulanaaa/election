@@ -42,6 +42,13 @@ impl Candidate {
             Candidate::Other(id) => Candidate::Other(id),
         }
     }
+
+    pub fn id(&self) -> u64 {
+        match *self {
+            Candidate::Me { id, acceptance: _ } => id,
+            Candidate::Other(id) => id,
+        }
+    }
 }
 
 impl PartialEq for Candidate {
