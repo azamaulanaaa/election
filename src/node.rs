@@ -176,7 +176,7 @@ where
         })
     }
 
-    async fn handle_request_vote_res(&self, msg: MsgAppendEntriesRes) -> Result<(), NodeError> {
+    async fn handle_request_vote_res(&self, msg: MsgRequestVoteRes) -> Result<(), NodeError> {
         Ok(())
     }
 
@@ -1853,6 +1853,31 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    mod handle_request_vote_res {
+        use super::*;
+
+        #[tokio::test]
+        async fn ignore_when_vote_for_other() {
+            let (_tx_in, rx_in) = mpsc::channel(1);
+            let (tx_out, _rx_out) = mpsc::channel(1);
+            let node = init_node(tx_out, rx_in).await;
+
+            {
+                node.state
+                    .set_vote_for(Some(Candidate::Other(node.id + 1)))
+                    .await
+                    .unwrap();
+            }
+
+            let msg_res = MsgRequestVoteRes {
+                term: node.state.get_term().await.unwrap(),
+                granted: true,
+            };
+
+            node.handle_request_vote_res(msg_res).await.unwrap();
         }
     }
 }
