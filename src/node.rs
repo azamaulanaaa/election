@@ -38,6 +38,7 @@ where
     storage: S,
     state: T,
     peers: MemPeers,
+    n_quorum: u64,
 }
 
 impl<T, S, E> Node<T, S, E>
@@ -50,6 +51,7 @@ where
         id: u64,
         tx_out: mpsc::Sender<Message<E>>,
         rx_in: mpsc::Receiver<Message<E>>,
+        n_quorum: u64,
         state: T,
         storage: S,
     ) -> Self {
@@ -57,6 +59,7 @@ where
             id,
             tx_out,
             rx_in: Mutex::new(rx_in),
+            n_quorum,
             state,
             storage,
             peers: MemPeers::default(),
@@ -237,7 +240,8 @@ mod tests {
     ) -> Node<MemState, MemStorage<usize>, usize> {
         let mem_state = MemState::default();
         let mem_storage = MemStorage::<usize>::default();
-        let node = Node::new(1, tx_in, rx_out, mem_state, mem_storage);
+        let n_quorum = 2;
+        let node = Node::new(1, tx_in, rx_out, n_quorum, mem_state, mem_storage);
 
         node
     }
