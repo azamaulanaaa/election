@@ -176,7 +176,11 @@ where
         })
     }
 
-    async fn handle_request_vote_res(&self, msg: MsgRequestVoteRes) -> Result<(), NodeError> {
+    async fn handle_request_vote_res(
+        &self,
+        from: u64,
+        msg: MsgRequestVoteRes,
+    ) -> Result<(), NodeError> {
         Ok(())
     }
 
@@ -1872,12 +1876,13 @@ mod tests {
                     .unwrap();
             }
 
+            let from = node.id + 1;
             let msg_res = MsgRequestVoteRes {
                 term: node.state.get_term().await.unwrap(),
                 granted: true,
             };
 
-            node.handle_request_vote_res(msg_res).await.unwrap();
+            node.handle_request_vote_res(from, msg_res).await.unwrap();
         }
     }
 }
