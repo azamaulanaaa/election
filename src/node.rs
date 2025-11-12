@@ -1750,7 +1750,16 @@ mod tests {
                 {
                     for offset in 0..n_msgs {
                         let id = node.id + offset as u64;
-                        node.peers.insert(id, Peer { last_index }).await.unwrap();
+                        node.peers
+                            .insert(
+                                id,
+                                Peer {
+                                    last_index,
+                                    vote_granted: None,
+                                },
+                            )
+                            .await
+                            .unwrap();
                     }
                 }
 
@@ -1793,7 +1802,16 @@ mod tests {
                 {
                     for offset in 0..n_msgs {
                         let id = node.id + offset as u64;
-                        node.peers.insert(id, Peer { last_index }).await.unwrap();
+                        node.peers
+                            .insert(
+                                id,
+                                Peer {
+                                    last_index,
+                                    vote_granted: None,
+                                },
+                            )
+                            .await
+                            .unwrap();
                     }
                 }
 

@@ -8,6 +8,7 @@ pub enum PeersError {}
 #[derive(Clone, Copy)]
 pub struct Peer {
     pub last_index: u64,
+    pub vote_granted: Option<bool>,
 }
 
 #[async_trait::async_trait]
