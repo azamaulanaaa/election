@@ -12,7 +12,7 @@ use crate::{
         MsgRequestVoteRes,
     },
     peers::{MemPeers, Peers, PeersError},
-    state::{Candidate, State, StateError},
+    state::{State, StateError},
     storage::{Storage, StorageError, StorageValue},
 };
 
@@ -99,15 +99,8 @@ where
             .set_term(self.state.get_term().await? + 1)
             .await?;
 
-        let candidate = self
-            .state
-            .get_vote_for()
-            .await?
-            .unwrap_or(crate::state::Candidate::Me {
-                id: self.id,
-                acceptance: Default::default(),
-            });
-        self.state.set_vote_for(Some(candidate.clone())).await?;
+        let candidate_id = self.state.get_vote_for().await?.unwrap_or(self.id);
+        self.state.set_vote_for(Some(candidate_id.clone())).await?;
 
         let last_storage_state = {
             let last_index = self.storage.last_index().await?;
@@ -117,7 +110,7 @@ where
 
         let msg_req = MsgRequestVoteReq {
             term: self.state.get_term().await?,
-            candidate_id: candidate.id(),
+            candidate_id,
             last_storage_state,
         };
 
@@ -162,12 +155,11 @@ where
                 .state
                 .get_vote_for()
                 .await?
-                .is_none_or(|vote_for| vote_for.id() == msg.candidate_id),
+                .is_none_or(|candidate_id| candidate_id == msg.candidate_id),
         };
         let granted = granted && msg.last_storage_state >= last_storage_state;
         if granted {
-            let candidate = Candidate::Other(msg.candidate_id);
-            self.state.set_vote_for(Some(candidate)).await?;
+            self.state.set_vote_for(Some(msg.candidate_id)).await?;
         }
 
         Ok(MsgRequestVoteRes {
@@ -495,7 +487,7 @@ mod tests {
                 let _msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 let vote_for = node.state.get_vote_for().await.unwrap();
-                let expected_vote_for = Some(Candidate::Other(msg_req.candidate_id));
+                let expected_vote_for = Some(msg_req.candidate_id);
                 assert_eq!(vote_for, expected_vote_for);
             }
         }
@@ -615,10 +607,7 @@ mod tests {
                 let node = init_node(tx_out, rx_in).await;
 
                 {
-                    node.state
-                        .set_vote_for(Some(Candidate::Other(node.id + 1)))
-                        .await
-                        .unwrap();
+                    node.state.set_vote_for(node.id + 1).await.unwrap();
                     node.state
                         .set_term(node.state.get_term().await.unwrap() + 1)
                         .await
@@ -633,7 +622,7 @@ mod tests {
 
                 let msg_req = MsgRequestVoteReq {
                     term: node.state.get_term().await.unwrap(),
-                    candidate_id: node.state.get_vote_for().await.unwrap().unwrap().id(),
+                    candidate_id: node.state.get_vote_for().await.unwrap().unwrap(),
                     last_storage_state,
                 };
                 let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
@@ -648,10 +637,7 @@ mod tests {
                 let node = init_node(tx_out, rx_in).await;
 
                 {
-                    node.state
-                        .set_vote_for(Some(Candidate::Other(node.id + 1)))
-                        .await
-                        .unwrap();
+                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
                     node.state
                         .set_term(node.state.get_term().await.unwrap() + 1)
                         .await
@@ -666,7 +652,7 @@ mod tests {
 
                 let msg_req = MsgRequestVoteReq {
                     term: node.state.get_term().await.unwrap(),
-                    candidate_id: node.state.get_vote_for().await.unwrap().unwrap().id() + 1,
+                    candidate_id: node.state.get_vote_for().await.unwrap().unwrap() + 1,
                     last_storage_state,
                 };
                 let msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
@@ -702,7 +688,7 @@ mod tests {
                 let _msg_res = node.handle_request_vote_req(msg_req).await.unwrap();
 
                 let vote_for = node.state.get_vote_for().await.unwrap();
-                let expected_vote_for = Some(Candidate::Other(msg_req.candidate_id));
+                let expected_vote_for = Some(msg_req.candidate_id);
                 assert_eq!(vote_for, expected_vote_for);
             }
         }
@@ -808,13 +794,7 @@ mod tests {
                 let node = init_node(tx_out, rx_in).await;
 
                 {
-                    node.state
-                        .set_vote_for(Some(Candidate::Me {
-                            id: node.id,
-                            acceptance: Default::default(),
-                        }))
-                        .await
-                        .unwrap();
+                    node.state.set_vote_for(Some(node.id)).await.unwrap();
                 }
 
                 let last_storage_state = {
@@ -1587,13 +1567,7 @@ mod tests {
 
                 {
                     node.state.set_term(2_u64).await.unwrap();
-                    node.state
-                        .set_vote_for(Some(crate::state::Candidate::Me {
-                            id: node.id,
-                            acceptance: Default::default(),
-                        }))
-                        .await
-                        .unwrap();
+                    node.state.set_vote_for(Some(node.id)).await.unwrap();
                 }
 
                 {
@@ -1686,8 +1660,6 @@ mod tests {
     }
 
     mod start_election {
-        use crate::state::Candidate;
-
         use super::*;
 
         #[tokio::test]
@@ -1756,10 +1728,7 @@ mod tests {
             node.start_election().await.unwrap();
 
             let vote_for = node.state.get_vote_for().await.unwrap();
-            let expected_vote_for = Some(Candidate::Me {
-                id: node.id,
-                acceptance: Default::default(),
-            });
+            let expected_vote_for = Some(node.id);
             assert_eq!(vote_for, expected_vote_for);
         }
 
@@ -1870,10 +1839,7 @@ mod tests {
             let node = init_node(tx_out, rx_in).await;
 
             {
-                node.state
-                    .set_vote_for(Some(Candidate::Other(node.id + 1)))
-                    .await
-                    .unwrap();
+                node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
             }
 
             let from = node.id + 1;

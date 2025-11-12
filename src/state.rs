@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use async_lock::RwLock;
 
 #[derive(thiserror::Error, Debug)]
@@ -19,62 +17,18 @@ pub trait State: Sync {
     ) -> Result<(), StateError>;
     async fn get_leader_id(&self) -> Result<Option<u64>, StateError>;
 
-    async fn set_vote_for<I: Into<Option<Candidate>> + Send>(
+    async fn set_vote_for<I: Into<Option<u64>> + Send>(
         &self,
         vote_for: I,
     ) -> Result<(), StateError>;
-    async fn get_vote_for(&self) -> Result<Option<Candidate>, StateError>;
+    async fn get_vote_for(&self) -> Result<Option<u64>, StateError>;
 }
 
-#[derive(Clone, Debug)]
-pub enum Candidate {
-    Me {
-        id: u64,
-        acceptance: HashMap<u64, bool>,
-    },
-    Other(u64),
-}
-
-impl Candidate {
-    pub fn into_other(self) -> Candidate {
-        match self {
-            Candidate::Me { id, acceptance: _ } => Candidate::Other(id),
-            Candidate::Other(id) => Candidate::Other(id),
-        }
-    }
-
-    pub fn id(&self) -> u64 {
-        match *self {
-            Candidate::Me { id, acceptance: _ } => id,
-            Candidate::Other(id) => id,
-        }
-    }
-}
-
-impl PartialEq for Candidate {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Candidate::Me {
-                    id: id,
-                    acceptance: _,
-                },
-                Candidate::Me {
-                    id: other_id,
-                    acceptance: _,
-                },
-            ) => id == other_id,
-            (Candidate::Other(id), Candidate::Other(other_id)) => id == other_id,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Default, Clone, PartialEq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct MemStateInner {
     term: u64,
     leader_id: Option<u64>,
-    vote_for: Option<Candidate>,
+    vote_for: Option<u64>,
 }
 
 #[derive(Default, Debug)]
@@ -113,7 +67,7 @@ impl State for MemState {
         Ok(leader_id)
     }
 
-    async fn set_vote_for<I: Into<Option<Candidate>> + Send>(
+    async fn set_vote_for<I: Into<Option<u64>> + Send>(
         &self,
         vote_for: I,
     ) -> Result<(), StateError> {
@@ -123,7 +77,7 @@ impl State for MemState {
         Ok(())
     }
 
-    async fn get_vote_for(&self) -> Result<Option<Candidate>, StateError> {
+    async fn get_vote_for(&self) -> Result<Option<u64>, StateError> {
         let vote_for = self.inner.read().await.vote_for.clone();
 
         Ok(vote_for)
