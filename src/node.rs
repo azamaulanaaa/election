@@ -173,6 +173,15 @@ where
         from: u64,
         msg: MsgRequestVoteRes,
     ) -> Result<(), NodeError> {
+        let candidate_id = self.state.get_vote_for().await?;
+        let candidate_id = match candidate_id {
+            Some(v) => v,
+            _ => return Ok(()),
+        };
+        if candidate_id != self.id {
+            return Ok(());
+        }
+
         Ok(())
     }
 
@@ -1848,6 +1857,8 @@ mod tests {
     }
 
     mod handle_request_vote_res {
+        use crate::peers::Peer;
+
         use super::*;
 
         #[tokio::test]
@@ -1861,12 +1872,30 @@ mod tests {
             }
 
             let from = node.id + 1;
+            {
+                node.peers
+                    .insert(
+                        from,
+                        Peer {
+                            last_index: node.storage.last_index().await.unwrap(),
+                            vote_granted: None,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+
             let msg_res = MsgRequestVoteRes {
                 term: node.state.get_term().await.unwrap(),
                 granted: true,
             };
 
             node.handle_request_vote_res(from, msg_res).await.unwrap();
+
+            let vote_granted = node.peers.get(from).await.unwrap().unwrap().vote_granted;
+            let expect_vote_granted = None;
+
+            assert_eq!(vote_granted, expect_vote_granted);
         }
     }
 }
