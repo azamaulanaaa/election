@@ -182,6 +182,14 @@ where
             return Ok(());
         }
 
+        let peer = self.peers.get(from).await?;
+        if let Some(peer) = peer {
+            let mut peer = peer;
+            peer.vote_granted = Some(msg.granted);
+
+            self.peers.insert(from, peer).await?;
+        }
+
         Ok(())
     }
 
