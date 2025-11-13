@@ -638,6 +638,43 @@ mod tests {
                 let candidate_id = node.state.get_vote_for().await.unwrap();
                 assert_eq!(candidate_id, None);
             }
+
+            #[tokio::test]
+            async fn set_peers_vote_granted_as_none() {
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
+
+                {
+                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
+                }
+
+                let from = node.id + 1;
+                {
+                    node.peers
+                        .insert(
+                            from,
+                            Peer {
+                                last_index: node.storage.last_index().await.unwrap(),
+                                vote_granted: Some(true),
+                            },
+                        )
+                        .await
+                        .unwrap();
+                }
+
+                let new_term = node.state.get_term().await.unwrap() + 1;
+                let msg_res = MsgRequestVoteRes {
+                    term: new_term,
+                    granted: true,
+                };
+
+                handle_res(&node, from, msg_res).await.unwrap();
+
+                let vote_granted = node.peers.get(from).await.unwrap().unwrap().vote_granted;
+
+                assert_eq!(vote_granted, None);
+            }
         }
     }
 }
