@@ -556,5 +556,45 @@ mod tests {
                 assert_eq!(vote_granted, expect_vote_granted);
             }
         }
+
+        mod higher_term {
+            use super::*;
+
+            #[tokio::test]
+            async fn update_term_to_higher_term() {
+                let (_tx_in, rx_in) = mpsc::channel(1);
+                let (tx_out, _rx_out) = mpsc::channel(1);
+                let node = init_node(tx_out, rx_in).await;
+
+                {
+                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
+                }
+
+                let from = node.id + 1;
+                {
+                    node.peers
+                        .insert(
+                            from,
+                            Peer {
+                                last_index: node.storage.last_index().await.unwrap(),
+                                vote_granted: None,
+                            },
+                        )
+                        .await
+                        .unwrap();
+                }
+
+                let new_term = node.state.get_term().await.unwrap() + 1;
+                let msg_res = MsgRequestVoteRes {
+                    term: new_term,
+                    granted: false,
+                };
+
+                handle_res(&node, from, msg_res).await.unwrap();
+
+                let term = node.state.get_term().await.unwrap();
+                assert_eq!(term, new_term);
+            }
+        }
     }
 }
