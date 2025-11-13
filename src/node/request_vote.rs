@@ -57,8 +57,8 @@ where
     let current_term = node.state.get_term().await?;
     let new_term = current_term.max(msg.term);
     if new_term != current_term {
-        node.state.set_term(new_term).await.unwrap();
-        node.state.set_vote_for(None).await.unwrap();
+        node.state.set_term(new_term).await?;
+        node.state.set_vote_for(None).await?;
     }
 
     let candidate_id = node.state.get_vote_for().await?;
