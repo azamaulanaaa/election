@@ -59,6 +59,17 @@ where
     if new_term != current_term {
         node.state.set_term(new_term).await?;
         node.state.set_vote_for(None).await?;
+
+        let peer_ids = node.peers.ids().await?.into_iter();
+        for id in peer_ids {
+            let peer = node.peers.get(id).await?;
+            let mut peer = match peer {
+                Some(v) => v,
+                None => continue,
+            };
+            peer.vote_granted = None;
+            node.peers.insert(id, peer).await?;
+        }
     }
 
     let candidate_id = node.state.get_vote_for().await?;
