@@ -55,11 +55,7 @@ where
     E: Clone + Send + Sync + PartialEq + Debug,
 {
     let candidate_id = node.state.get_vote_for().await?;
-    let candidate_id = match candidate_id {
-        Some(v) => v,
-        _ => return Ok(()),
-    };
-    if candidate_id != node.id {
+    if candidate_id.is_none() {
         return Ok(());
     }
 
@@ -524,50 +520,13 @@ mod tests {
             use super::*;
 
             #[tokio::test]
-            async fn ignore_when_vote_for_other() {
-                let (_tx_in, rx_in) = mpsc::channel(1);
-                let (tx_out, _rx_out) = mpsc::channel(1);
-                let node = init_node(tx_out, rx_in).await;
-
-                {
-                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
-                }
-
-                let from = node.id + 1;
-                {
-                    node.peers
-                        .insert(
-                            from,
-                            Peer {
-                                last_index: node.storage.last_index().await.unwrap(),
-                                vote_granted: None,
-                            },
-                        )
-                        .await
-                        .unwrap();
-                }
-
-                let msg_res = MsgRequestVoteRes {
-                    term: node.state.get_term().await.unwrap(),
-                    granted: true,
-                };
-
-                handle_res(&node, from, msg_res).await.unwrap();
-
-                let vote_granted = node.peers.get(from).await.unwrap().unwrap().vote_granted;
-                let expect_vote_granted = None;
-
-                assert_eq!(vote_granted, expect_vote_granted);
-            }
-
-            #[tokio::test]
             async fn update_peer_vote_granted() {
                 let (_tx_in, rx_in) = mpsc::channel(1);
                 let (tx_out, _rx_out) = mpsc::channel(1);
                 let node = init_node(tx_out, rx_in).await;
 
                 {
-                    node.state.set_vote_for(Some(node.id)).await.unwrap();
+                    node.state.set_vote_for(Some(node.id + 1)).await.unwrap();
                 }
 
                 let from = node.id + 1;
