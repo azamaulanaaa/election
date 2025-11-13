@@ -54,6 +54,11 @@ where
     S: Storage<E>,
     E: Clone + Send + Sync + PartialEq + Debug,
 {
+    node.state
+        .set_term(node.state.get_term().await?.max(msg.term))
+        .await
+        .unwrap();
+
     let candidate_id = node.state.get_vote_for().await?;
     if candidate_id.is_none() {
         return Ok(());
